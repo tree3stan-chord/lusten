@@ -10,7 +10,7 @@ PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # ── build and deploy ────────────────────────────────────────────────────
 echo "▶ Install dependencies"
-npm ci
+npm install
 
 echo "▶ Build Next.js application"
 npm run build
