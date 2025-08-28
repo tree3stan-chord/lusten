@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import SpotifyPlayer from '../../components/SpotifyPlayer';
@@ -34,7 +34,11 @@ export default function RoomPage({ params }: RoomPageProps) {
   const { roomState, chatMessages, isConnected, syncEvents, emitTrackChange, emitPlaybackState, emitSeekPosition, sendChatMessage, clearSyncEvents } = useSocket(roomId, userId, isHost);
 
   useEffect(() => {
+    let mounted = true;
+    
     params.then(({ id }) => {
+      if (!mounted) return;
+      
       setRoomId(id);
       
       // Determine if user is host - for now, first user to join is host
@@ -46,19 +50,44 @@ export default function RoomPage({ params }: RoomPageProps) {
       setRoom({
         id,
         name: `Room ${id}`,
-        hostName: userIsHost ? userName : 'Unknown Host',
+        hostName: userIsHost ? (session?.user?.name || 'Anonymous') : 'Unknown Host',
         listeners: []
       });
     });
-  }, [params, session, userName]);
 
-  const handleSendMessage = (e: React.FormEvent) => {
+    return () => {
+      mounted = false;
+    };
+  }, [params, session?.user]);
+
+  const handleSendMessage = useCallback((e: React.FormEvent) => {
     e.preventDefault();
     if (message.trim()) {
       sendChatMessage(message.trim(), userName);
       setMessage('');
     }
-  };
+  }, [message, sendChatMessage, userName]);
+
+  const handleTrackChange = useCallback((track: {
+    id: string;
+    name: string;
+    artists: Array<{ name: string }>;
+    album: {
+      name: string;
+      images: Array<{ url: string }>;
+    };
+    duration_ms: number;
+  }) => {
+    emitTrackChange(track);
+  }, [emitTrackChange]);
+
+  const handlePlayStateChange = useCallback((isPlaying: boolean, position?: number) => {
+    emitPlaybackState(isPlaying, position || 0);
+  }, [emitPlaybackState]);
+
+  const handleSeek = useCallback((position: number) => {
+    emitSeekPosition(position);
+  }, [emitSeekPosition]);
 
   if (!room) {
     return (
@@ -104,18 +133,9 @@ export default function RoomPage({ params }: RoomPageProps) {
             <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-6">Now Playing</h3>
             <SpotifyPlayer 
               isHost={isHost}
-              onTrackChange={(track) => {
-                // Emit track change to all room participants
-                emitTrackChange(track);
-              }}
-              onPlayStateChange={(isPlaying, position) => {
-                // Emit playback state to all room participants
-                emitPlaybackState(isPlaying, position || 0);
-              }}
-              onSeek={(position) => {
-                // Emit seek position to all room participants
-                emitSeekPosition(position);
-              }}
+              onTrackChange={handleTrackChange}
+              onPlayStateChange={handlePlayStateChange}
+              onSeek={handleSeek}
               currentTrack={roomState?.currentTrack}
               syncedIsPlaying={roomState?.isPlaying}
               syncedPosition={roomState?.position}

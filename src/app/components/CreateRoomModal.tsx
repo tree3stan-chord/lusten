@@ -5,19 +5,21 @@ import { useState } from 'react';
 interface CreateRoomModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onCreateRoom: (roomName: string) => void;
+  onCreateRoom: (roomName: string, isPublic: boolean) => void;
 }
 
 export default function CreateRoomModal({ isOpen, onClose, onCreateRoom }: CreateRoomModalProps) {
   const [roomName, setRoomName] = useState('');
+  const [isPublic, setIsPublic] = useState(false);
 
   if (!isOpen) return null;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (roomName.trim()) {
-      onCreateRoom(roomName.trim());
+      onCreateRoom(roomName.trim(), isPublic);
       setRoomName('');
+      setIsPublic(false);
     }
   };
 
@@ -50,6 +52,40 @@ export default function CreateRoomModal({ isOpen, onClose, onCreateRoom }: Creat
               className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-gray-700 dark:text-white"
               autoFocus
             />
+          </div>
+          
+          <div className="mb-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <label htmlFor="isPublic" className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  Room Visibility
+                </label>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  {isPublic ? 'Anyone can discover and join this room' : 'Only people with the link can join'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsPublic(!isPublic)}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 ${
+                  isPublic ? 'bg-indigo-600' : 'bg-gray-200 dark:bg-gray-600'
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    isPublic ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+            </div>
+            <div className="mt-2 flex items-center text-sm">
+              <span className={`mr-2 ${!isPublic ? 'text-indigo-600 dark:text-indigo-400 font-medium' : 'text-gray-500'}`}>
+                🔒 Private
+              </span>
+              <span className={`${isPublic ? 'text-indigo-600 dark:text-indigo-400 font-medium' : 'text-gray-500'}`}>
+                🌍 Public
+              </span>
+            </div>
           </div>
           
           <div className="flex gap-3">

@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useSession, signIn, signOut } from 'next-auth/react';
+import { io, Socket } from 'socket.io-client';
 import CreateRoomModal from './components/CreateRoomModal';
 
 interface Room {
@@ -16,9 +17,36 @@ interface Room {
 export default function Home() {
   const { data: session, status } = useSession();
   const [rooms, setRooms] = useState<Room[]>([]);
+  const [publicRooms, setPublicRooms] = useState<Room[]>([]);
+  const [socket, setSocket] = useState<Socket | null>(null);
 
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const router = useRouter();
+
+  useEffect(() => {
+    // Initialize socket connection
+    const socketConnection = io();
+    setSocket(socketConnection);
+
+    // Get public rooms on connect
+    socketConnection.on('connect', () => {
+      socketConnection.emit('get-public-rooms');
+    });
+
+    // Listen for public rooms list
+    socketConnection.on('public-rooms-list', (rooms: Room[]) => {
+      setPublicRooms(rooms);
+    });
+
+    // Listen for new public rooms
+    socketConnection.on('public-room-created', (room: Room) => {
+      setPublicRooms(prev => [...prev, room]);
+    });
+
+    return () => {
+      socketConnection.disconnect();
+    };
+  }, []);
 
   const handleCreateRoom = () => {
     try {
@@ -34,17 +62,34 @@ export default function Home() {
     }
   };
 
-  const handleCreateRoomSubmit = (roomName: string) => {
+  const handleCreateRoomSubmit = (roomName: string, isPublic: boolean) => {
     try {
+      if (!socket || !session?.user?.email) {
+        alert('Unable to create room. Please try again.');
+        return;
+      }
+
       const newRoomId = Math.random().toString(36).substr(2, 9);
-      const newRoom: Room = {
-        id: newRoomId,
-        name: roomName,
-        listeners: 1
-      };
-      setRooms(prev => [...prev, newRoom]);
-      setIsCreateModalOpen(false);
-      router.push(`/room/${newRoomId}`);
+      const userId = session.user.email;
+
+      // Create room via socket
+      socket.emit('create-room', {
+        roomId: newRoomId,
+        roomName,
+        userId,
+        isPublic
+      });
+
+      // Listen for room created confirmation
+      socket.once('room-created', () => {
+        setIsCreateModalOpen(false);
+        router.push(`/room/${newRoomId}`);
+      });
+
+      socket.once('error', (error: string) => {
+        alert(`Failed to create room: ${error}`);
+      });
+
     } catch (error) {
       console.error('Error creating room:', error);
       alert('Failed to create room. Please try again.');
@@ -107,7 +152,7 @@ export default function Home() {
             Listen Together
           </h2>
           <p className="text-lg text-gray-600 dark:text-gray-300 mb-8 max-w-2xl mx-auto">
-            Create shared listening experiences with friends. Host a room or join others to enjoy music together in real-time.
+            Create shared listening experiences with friends. Host a room or join others to chat and enjoy music together in real-time.
           </p>
           
           {/* Create Room Button */}
@@ -121,6 +166,50 @@ export default function Home() {
             Create Room
           </button>
         </div>
+
+        {/* Public Rooms */}
+        {publicRooms.length > 0 && (
+          <div className="mb-12">
+            <h3 className="text-2xl font-semibold text-gray-900 dark:text-white mb-6 text-center">
+              Public Rooms
+            </h3>
+            <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 max-w-4xl mx-auto">
+              {publicRooms.map((room) => (
+                <div
+                  key={room.id}
+                  className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-6 hover:shadow-md transition-shadow"
+                >
+                  <div className="flex justify-between items-start mb-4">
+                    <h4 className="text-lg font-semibold text-gray-900 dark:text-white">
+                      {room.name}
+                    </h4>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-gray-500 dark:text-gray-400">🌍 Public</span>
+                      <span className="bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-100 text-sm px-2 py-1 rounded-full">
+                        {room.listeners} listening
+                      </span>
+                    </div>
+                  </div>
+                  
+                  {room.currentTrack && (
+                    <div className="mb-4">
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Now playing:</p>
+                      <p className="font-medium text-gray-900 dark:text-white">{room.currentTrack}</p>
+                      <p className="text-sm text-gray-600 dark:text-gray-400">{room.currentArtist}</p>
+                    </div>
+                  )}
+                  
+                  <button
+                    onClick={() => handleJoinRoom(room.id)}
+                    className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-2 px-4 rounded-lg font-medium transition-colors"
+                  >
+                    Join Room
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Active Rooms */}
         {rooms.length > 0 && (

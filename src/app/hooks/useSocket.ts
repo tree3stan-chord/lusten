@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { io, Socket } from 'socket.io-client'
 
 interface RoomState {
@@ -37,6 +37,9 @@ export const useSocket = (roomId: string, userId: string, isHost: boolean) => {
   const [syncEvents, setSyncEvents] = useState<{
     seekTo?: { position: number; timestamp: number }
   }>({})
+  
+  const isHostRef = useRef(isHost)
+  isHostRef.current = isHost
 
   useEffect(() => {
     if (!roomId || !userId) return
@@ -52,7 +55,7 @@ export const useSocket = (roomId: string, userId: string, isHost: boolean) => {
       setIsConnected(true)
       
       // Join room after connection
-      newSocket.emit('join-room', { roomId, userId, isHost })
+      newSocket.emit('join-room', { roomId, userId, isHost: isHostRef.current })
     })
 
     newSocket.on('disconnect', () => {
@@ -128,34 +131,34 @@ export const useSocket = (roomId: string, userId: string, isHost: boolean) => {
       newSocket.emit('leave-room', { roomId, userId })
       newSocket.disconnect()
     }
-  }, [roomId, userId, isHost])
+  }, [roomId, userId]) // Removed isHost from dependencies
 
-  const emitTrackChange = (track: RoomState['currentTrack']) => {
-    if (socket && isHost) {
+  const emitTrackChange = useCallback((track: RoomState['currentTrack']) => {
+    if (socket && isHostRef.current) {
       console.log('Track changed:', track?.name)
       socket.emit('track-change', { roomId, track, userId })
     }
-  }
+  }, [socket, roomId, userId])
 
-  const emitPlaybackState = (isPlaying: boolean, position: number) => {
-    if (socket && isHost) {
+  const emitPlaybackState = useCallback((isPlaying: boolean, position: number) => {
+    if (socket && isHostRef.current) {
       console.log('Playback state changed:', { isPlaying, position })
       socket.emit('playback-state', { roomId, isPlaying, position, userId })
     }
-  }
+  }, [socket, roomId, userId])
 
-  const emitSeekPosition = (position: number) => {
-    if (socket && isHost) {
+  const emitSeekPosition = useCallback((position: number) => {
+    if (socket && isHostRef.current) {
       console.log('Seek position:', position)
       socket.emit('seek-position', { roomId, position, userId })
     }
-  }
+  }, [socket, roomId, userId])
 
-  const clearSyncEvents = () => {
+  const clearSyncEvents = useCallback(() => {
     setSyncEvents({})
-  }
+  }, [])
 
-  const sendChatMessage = (message: string, userName: string) => {
+  const sendChatMessage = useCallback((message: string, userName: string) => {
     if (socket) {
       socket.emit('chat-message', { roomId, message, userId, userName })
       
@@ -169,7 +172,7 @@ export const useSocket = (roomId: string, userId: string, isHost: boolean) => {
       setChatMessages(prev => [...prev, chatMessage])
       console.log('Chat message sent:', message)
     }
-  }
+  }, [socket, roomId, userId])
 
   return {
     socket,

@@ -35,7 +35,6 @@ export default function SpotifyPlayer({
   isHost, 
   onTrackChange, 
   onPlayStateChange,
-  onSeek: _onSeek, // Prefix with underscore to indicate intentionally unused
   currentTrack: syncedTrack,
   syncedIsPlaying,
   syncedPosition,
@@ -72,9 +71,15 @@ export default function SpotifyPlayer({
   }, [syncEvents, seekToPosition, isHost, onSyncEventHandled]);
 
   // Position sync for new joiners (non-hosts)
+  const lastSyncCheck = React.useRef<number>(0);
+  
   React.useEffect(() => {
     if (!isHost && syncedPosition !== undefined && lastUpdate && seekToPosition) {
       const now = Date.now();
+      
+      // Only check sync every 5 seconds to prevent constant re-renders
+      if (now - lastSyncCheck.current < 5000) return;
+      
       const timeSinceUpdate = (now - lastUpdate) / 1000; // Convert to seconds
       const currentSyncPosition = syncedPosition + (syncedIsPlaying ? timeSinceUpdate : 0);
       
@@ -85,20 +90,36 @@ export default function SpotifyPlayer({
       if (positionDiff > 2 && now - lastSyncTime > 5000) { // Don't sync too frequently
         console.log('Position sync needed:', { currentPos, currentSyncPosition, diff: positionDiff });
         seekToPosition(currentSyncPosition * 1000); // Convert to milliseconds
+        lastSyncCheck.current = now;
       }
     }
-  }, [isHost, syncedPosition, syncedIsPlaying, lastUpdate, position, seekToPosition, lastSyncTime]);
+  }, [isHost, syncedPosition, syncedIsPlaying, lastUpdate, seekToPosition, lastSyncTime]); // Removed position from deps
 
   // Notify parent components of state changes (only for hosts)
+  const prevTrackRef = React.useRef<string | null>(null);
+  
   React.useEffect(() => {
     if (isHost && onTrackChange && currentTrack) {
-      onTrackChange(currentTrack);
+      if (prevTrackRef.current !== currentTrack.id) {
+        onTrackChange(currentTrack);
+        prevTrackRef.current = currentTrack.id;
+      }
     }
   }, [isHost, currentTrack, onTrackChange]);
 
+  const prevPlayStateRef = React.useRef<{ isPlaying: boolean; position: number } | null>(null);
+  
   React.useEffect(() => {
-    if (isHost && onPlayStateChange !== undefined) {
-      onPlayStateChange(isPlaying, position);
+    if (isHost && onPlayStateChange) {
+      const currentState = { isPlaying, position };
+      const prevState = prevPlayStateRef.current;
+      
+      if (!prevState || 
+          prevState.isPlaying !== currentState.isPlaying || 
+          Math.abs(prevState.position - currentState.position) > 1000) {
+        onPlayStateChange(isPlaying, position);
+        prevPlayStateRef.current = currentState;
+      }
     }
   }, [isHost, isPlaying, position, onPlayStateChange]);
 

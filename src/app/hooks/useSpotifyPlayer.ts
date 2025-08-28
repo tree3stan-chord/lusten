@@ -121,7 +121,7 @@ export const useSpotifyPlayer = () => {
       }
     };
     // @ts-expect-error - NextAuth v4 session extension
-  }, [session?.accessToken, player]);
+  }, [session?.accessToken]); // Removed player from dependencies to prevent infinite loop
 
   const play = useCallback(async (spotifyUri?: string) => {
     // @ts-expect-error - NextAuth v4 session extension
