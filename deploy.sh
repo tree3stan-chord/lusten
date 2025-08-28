@@ -5,31 +5,18 @@ umask 022
 # ── config ──────────────────────────────────────────────────────────────
 SITE="lusten.musicsian.com"
 WEB_ROOT="/var/www/$SITE"
-RELEASES="$WEB_ROOT/releases"
-CURRENT="$WEB_ROOT/current"
-STAMP="${1:-$(date +%Y-%m-%d-%H%M%S)}"   # you can pass a stamp manually if you want
-KEEP="${KEEP:-10}"                       # how many releases to keep
+STAMP="${1:-$(date +%Y-%m-%d-%H%M%S)}"
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
-STAGE="${STAGE_DIR:-$HOME/builds/$SITE/$STAMP}"
 
-# ── ensure dirs exist ───────────────────────────────────────────────────
-echo "▶ Ensure web root"
-sudo install -d -m 0755 "$WEB_ROOT"
-sudo install -d -m 0755 "$RELEASES"
-
-# ── build application ──────────────────────────────────────────────────
+# ── build and deploy ────────────────────────────────────────────────────
 echo "▶ Install dependencies"
 npm ci
 
 echo "▶ Build Next.js application"
 npm run build
 
-# ── stage application files ───────────────────────────────────────────
-echo "▶ Stage application files → $STAGE"
-mkdir -p "$STAGE"
-
-# Copy all necessary files for the Next.js app
-rsync -az --delete \
+echo "▶ Deploy to web root"
+sudo rsync -az --delete \
   --include '/.next/***' \
   --include '/node_modules/***' \
   --include '/public/***' \
@@ -37,158 +24,90 @@ rsync -az --delete \
   --include '/package.json' \
   --include '/package-lock.json' \
   --include '/next.config.ts' \
-  --include '/tsconfig.json' \
-  --include '/postcss.config.mjs' \
-  --include '/.env.local' \
-  --exclude '/.env.local.example' \
-  --exclude '/README.md' \
-  --exclude '/deploy.sh' \
   --exclude '/.git/***' \
   --exclude '/.*' \
-  "$PROJECT_DIR"/ "$STAGE"/
+  --exclude '/deploy.sh' \
+  "$PROJECT_DIR"/ "$WEB_ROOT"/
 
-echo "▶ Verify staged content"
-ls -l "$STAGE"
-test -f "$STAGE/package.json" || { echo "✗ package.json missing in stage"; exit 1; }
-test -d "$STAGE/.next" || { echo "✗ .next build output missing in stage"; exit 1; }
-test -d "$STAGE/node_modules" || { echo "✗ node_modules missing in stage"; exit 1; }
-
-# ── publish ─────────────────────────────────────────────────────────────
-echo "▶ Publish → $RELEASES/$STAMP"
-sudo rsync -az --delete "$STAGE"/ "$RELEASES/$STAMP"/
-
-echo "▶ Verify release contents"
-sudo test -f "$RELEASES/$STAMP/package.json" || { echo "✗ package.json missing in release"; exit 1; }
-sudo test -d "$RELEASES/$STAMP/.next" || { echo "✗ .next build output missing in release"; exit 1; }
-sudo test -d "$RELEASES/$STAMP/node_modules" || { echo "✗ node_modules missing in release"; exit 1; }
-
-# show release contents for debugging
-echo "▶ Release contents:"
-sudo ls -la "$RELEASES/$STAMP"
-
-# ── harden perms & preflight readability (as nginx user) ────────────────
+# ── fix permissions ─────────────────────────────────────────────────────
 echo "▶ Fix ownership/permissions"
-sudo chown -R root:root "$RELEASES/$STAMP"
-sudo find "$RELEASES/$STAMP" -type d -exec chmod 0755 {} +
-sudo find "$RELEASES/$STAMP" -type f -exec chmod 0644 {} +
+sudo chown -R root:root "$WEB_ROOT"
+sudo find "$WEB_ROOT" -type d -exec chmod 0755 {} +
+sudo find "$WEB_ROOT" -type f -exec chmod 0644 {} +
+# Make next binary executable
+sudo chmod +x "$WEB_ROOT/node_modules/.bin/next"
 
-NGINX_USER="nginx"
-if id "$NGINX_USER" >/dev/null 2>&1; then
-  sudo -u "$NGINX_USER" test -r "$RELEASES/$STAMP/package.json" || { echo "✗ nginx user cannot read release files"; exit 1; }
+# ── start application ───────────────────────────────────────────────────
+echo "▶ Start Next.js application"
+echo "DEBUG: Current directory: $(pwd)"
+echo "DEBUG: Changing to: $WEB_ROOT"
+cd "$WEB_ROOT"
+echo "DEBUG: Now in: $(pwd)"
+echo "DEBUG: Contents: $(ls -la)"
+
+# Kill existing process if running
+echo "DEBUG: Checking for existing PID file"
+if [ -f /tmp/lusten.pid ]; then
+    OLD_PID=$(cat /tmp/lusten.pid)
+    echo "DEBUG: Found existing PID: $OLD_PID"
+    if kill -0 "$OLD_PID" 2>/dev/null; then
+        echo "  Stopping existing process $OLD_PID"
+        kill "$OLD_PID"
+        sleep 2
+    fi
 else
-  echo "! Warn: nginx user '$NGINX_USER' not found; skipping readability check"
+    echo "DEBUG: No existing PID file"
 fi
 
-# ── flip symlink (with rollback trap) ───────────────────────────────────
-echo "▶ Flip symlink"
-# Save previous target for potential rollback
-prev="$(readlink -f "$CURRENT" 2>/dev/null || true)"
-if [[ -n "$prev" ]]; then
-  echo "  Previous release: $prev"
+# Also kill any process using port 3000
+echo "DEBUG: Checking for processes on port 3000"
+PORT_3000_OUTPUT=$(ss -tulpn | grep :3000 || echo "")
+echo "DEBUG: Port 3000 output: '$PORT_3000_OUTPUT'"
+if [ -n "$PORT_3000_OUTPUT" ]; then
+    EXISTING_PID=$(echo "$PORT_3000_OUTPUT" | sed -n 's/.*pid=\([0-9]*\).*/\1/p' | head -1)
+    if [ -n "$EXISTING_PID" ]; then
+        echo "  Killing process $EXISTING_PID using port 3000"
+        kill "$EXISTING_PID" 2>/dev/null || true
+        sleep 2
+    else
+        echo "DEBUG: Could not extract PID from port output"
+    fi
+else
+    echo "DEBUG: No process found on port 3000"
 fi
 
-# Remove old symlink first, then create new one atomically
-if [[ -L "$CURRENT" ]]; then
-  sudo rm -f "$CURRENT"
+# Start new process 
+echo "DEBUG: About to start Next.js..."
+echo "DEBUG: Running: npm start > /tmp/lusten.log 2>&1 &"
+nohup npm start > /tmp/lusten.log 2>&1 &
+START_PID=$!
+echo "DEBUG: Background process started"
+echo $START_PID > /tmp/lusten.pid
+echo "  Started with PID: $START_PID"
+echo "DEBUG: PID saved to file"
+
+# Wait and check if process is still running
+sleep 5
+if kill -0 "$START_PID" 2>/dev/null; then
+    echo "  ✓ Process is running on port 3000"
+    # Verify it's actually listening
+    if ss -tulpn | grep -q :3000; then
+        echo "  ✓ Service is listening on port 3000"
+    else
+        echo "  ⚠ Process running but not listening on port 3000"
+    fi
+else
+    echo "  ✗ Process failed to start"
+    echo "  Log output:"
+    cat /tmp/lusten.log 2>/dev/null || echo "  No log output available"
+    exit 1
 fi
-sudo ln -sfn "$RELEASES/$STAMP" "$CURRENT"
 
-# Verify the symlink is correct
-echo "▶ Verify symlink"
-if [[ ! -L "$CURRENT" ]]; then
-  echo "✗ $CURRENT is not a symlink"
-  exit 1
-fi
-
-LINK_TARGET="$(readlink -f "$CURRENT")"
-echo "  Current → $LINK_TARGET"
-
-# Ensure the symlink points to the right place
-if [[ "$LINK_TARGET" != "$RELEASES/$STAMP" ]]; then
-  echo "✗ Symlink points to wrong location"
-  echo "  Expected: $RELEASES/$STAMP"
-  echo "  Got: $LINK_TARGET"
-  exit 1
-fi
-
-# Setup rollback function
-rollback() {
-  echo "⚠️  Rolling back symlink to previous release"
-  # Kill the new process
-  if [[ -n "${LUSTEN_PID:-}" ]]; then
-    kill "$LUSTEN_PID" 2>/dev/null || true
-  fi
-  if [[ -n "${prev:-}" ]] && [[ -d "$prev" ]]; then
-    sudo ln -sfn "$prev" "$CURRENT"
-    echo "  Rolled back to: $prev"
-  else
-    echo "  No previous release to rollback to"
-  fi
-}
-trap 'rollback' ERR
-
-# ── start application from deployed location ───────────────────────────
-echo "▶ Start Next.js from deployed location"
-# Kill any existing lusten process
-pkill -f "next start" -u "$(whoami)" || true
-
-# Start from the deployed location
-cd "$RELEASES/$STAMP"
-nohup npm start > "$HOME/lusten.log" 2>&1 &
-LUSTEN_PID=$!
-echo "Started Lusten with PID: $LUSTEN_PID"
-echo "$LUSTEN_PID" > "$HOME/lusten.pid"
-cd "$PROJECT_DIR"  # return to original directory
-
-# ── selinux restore (safe if SELinux is permissive/disabled) ────────────
+# ── selinux restore ─────────────────────────────────────────────────────
 echo "▶ Restore SELinux context"
-sudo restorecon -Rv "$RELEASES/$STAMP" >/dev/null 2>&1 || true
-sudo restorecon -v  "$CURRENT" >/dev/null 2>&1 || true
+sudo restorecon -Rv "$WEB_ROOT" >/dev/null 2>&1 || true
 
-
-# ── nginx reload (only if config passes) ────────────────────────────────
-echo "▶ Test & reload Nginx"
-if sudo nginx -t 2>/dev/null; then
-  sudo systemctl reload nginx
-  echo "  ✓ Nginx reloaded"
-else
-  echo "✗ nginx -t failed"
-  exit 1
-fi
-
-# ── quick health check (non-fatal) ─────────────────────────────────────
-sleep 2  # Give the app a moment to start
-if command -v curl >/dev/null 2>&1; then
-  echo "▶ Health check: GET http://localhost:3000/"
-  if curl -fsS -o /dev/null -w "  Status: %{http_code}\n" "http://localhost:3000/" --max-time 10; then
-    echo "  ✓ Next.js app responding"
-  else
-    echo "  ⚠ App health check failed (non-fatal)"
-  fi
-  
-  echo "▶ Health check: GET https://$SITE/ (via proxy)"
-  if curl -fsS -o /dev/null -w "  Status: %{http_code}\n" "https://$SITE/" --max-time 10; then
-    echo "  ✓ Site responding via proxy"
-  else
-    echo "  ⚠ Proxy health check failed (non-fatal)"
-  fi
-fi
-
-# ── prune old releases ──────────────────────────────────────────────────
-echo "▶ Prune old releases (keep $KEEP)"
-CURRENT_RELEASE="$(basename "$(readlink -f "$CURRENT")")"
-OLD_RELEASES=$(sudo bash -c "ls -1dt $RELEASES/* 2>/dev/null | grep -v '$CURRENT_RELEASE' | tail -n +$((KEEP+1))" || true)
-if [[ -n "$OLD_RELEASES" ]]; then
-  echo "$OLD_RELEASES" | while read -r old_release; do
-    echo "  Removing: $(basename "$old_release")"
-  done
-  echo "$OLD_RELEASES" | sudo xargs -r rm -rf
-else
-  echo "  No old releases to prune"
-fi
-
-echo "✓ Deployed $STAMP → $SITE"
-echo "  Next.js app: http://localhost:3000/"
-echo "  Live at: https://$SITE/"
-echo "  PID file: $HOME/lusten.pid"
-echo "  Logs: $HOME/lusten.log"
+echo "✓ Deployed $SITE"
+echo "  PID: $(cat /tmp/lusten.pid 2>/dev/null || echo 'unknown')"
+echo ""
+echo "▶ Visit: https://$SITE/"
