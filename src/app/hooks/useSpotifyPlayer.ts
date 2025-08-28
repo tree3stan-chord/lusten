@@ -121,6 +121,7 @@ export const useSpotifyPlayer = () => {
       }
     };
     // @ts-expect-error - NextAuth v4 session extension
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.accessToken]); // Removed player from dependencies to prevent infinite loop
 
   const play = useCallback(async (spotifyUri?: string) => {

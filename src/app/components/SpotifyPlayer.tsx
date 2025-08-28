@@ -93,6 +93,7 @@ export default function SpotifyPlayer({
         lastSyncCheck.current = now;
       }
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isHost, syncedPosition, syncedIsPlaying, lastUpdate, seekToPosition, lastSyncTime]); // Removed position from deps
 
   // Notify parent components of state changes (only for hosts)

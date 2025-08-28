@@ -3,6 +3,7 @@ import SpotifyProvider from 'next-auth/providers/spotify'
 
 // @ts-expect-error - NextAuth v4 compatibility with Next.js 15
 const handler = NextAuth({
+  secret: process.env.NEXTAUTH_SECRET,
   providers: [
     SpotifyProvider({
       clientId: process.env.SPOTIFY_CLIENT_ID!,
@@ -23,30 +24,112 @@ const handler = NextAuth({
   },
   cookies: {
     sessionToken: {
-      name: `next-auth.session-token`,
+      name: '__Secure-next-auth.session-token',
       options: {
         httpOnly: true,
         sameSite: 'lax',
         path: '/',
-        secure: process.env.NODE_ENV === 'production'
+        secure: true,
+        // Remove domain to prevent cross-subdomain sharing
+        // domain: undefined
+      }
+    },
+    callbackUrl: {
+      name: '__Secure-next-auth.callback-url',
+      options: {
+        sameSite: 'lax',
+        path: '/',
+        secure: true,
+        // Remove domain to prevent cross-subdomain sharing
+        // domain: undefined
+      }
+    },
+    csrfToken: {
+      name: '__Host-next-auth.csrf-token',
+      options: {
+        httpOnly: true,
+        sameSite: 'lax',
+        path: '/',
+        secure: true
       }
     }
   },
   callbacks: {
     // @ts-expect-error - NextAuth v4 callback types
-    async jwt({ token, account }) {
-      if (account) {
-        token.accessToken = account.access_token
-        token.refreshToken = account.refresh_token
-        token.expiresAt = account.expires_at
+    async jwt({ token, account, user }) {
+      try {
+        const logData = {
+          account: !!account, 
+          user: !!user, 
+          token: !!token,
+          userId: token?.sub || user?.id,
+          email: token?.email || user?.email,
+          accountType: account?.provider,
+          accessToken: !!account?.access_token,
+          tokenPreview: token ? JSON.stringify(token).substring(0, 100) + '...' : null,
+          userPreview: user ? JSON.stringify(user).substring(0, 100) + '...' : null,
+          accountPreview: account ? JSON.stringify({
+            provider: account.provider,
+            type: account.type,
+            userId: account.userId
+          }) : null
+        }
+        
+        console.log('JWT callback START:', logData);
+        
+        // Log to our endpoint
+        try {
+          await fetch(`${process.env.NEXTAUTH_URL}/api/auth-logs`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ event: 'jwt_callback', data: logData })
+          });
+        } catch {
+          // Ignore fetch errors
+        }
+        
+        if (account && user) {
+          console.log('Processing new login for:', user.email);
+          token.accessToken = account.access_token
+          token.refreshToken = account.refresh_token
+          token.expiresAt = account.expires_at
+          token.userId = user.id
+          console.log('JWT token created successfully for:', user.email);
+        } else {
+          console.log('Returning existing token for:', token?.email);
+        }
+        
+        console.log('JWT callback END - returning token');
+        return token
+      } catch (error) {
+        console.error('JWT callback ERROR:', error);
+        return token
       }
-      return token
     },
     // @ts-expect-error - NextAuth v4 callback types
     async session({ session, token }) {
-      session.accessToken = token.accessToken
-      session.user.id = token.sub
-      return session
+      try {
+        console.log('Session callback START:', { 
+          session: !!session, 
+          token: !!token,
+          userEmail: session?.user?.email,
+          tokenSub: token?.sub,
+          hasAccessToken: !!token?.accessToken
+        });
+        
+        if (session?.user && token) {
+          session.accessToken = token.accessToken
+          session.user.id = token.sub || token.userId
+          console.log('Session created successfully for:', session.user.email);
+        } else {
+          console.log('Session callback - missing session or token');
+        }
+        
+        return session
+      } catch (error) {
+        console.error('Session callback ERROR:', error);
+        return session
+      }
     }
   },
   pages: {

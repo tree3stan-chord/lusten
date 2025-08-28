@@ -16,7 +16,6 @@ interface Room {
 
 export default function Home() {
   const { data: session, status } = useSession();
-  const [rooms, setRooms] = useState<Room[]>([]);
   const [publicRooms, setPublicRooms] = useState<Room[]>([]);
   const [socket, setSocket] = useState<Socket | null>(null);
 
@@ -110,6 +109,15 @@ export default function Home() {
               <h1 className="text-2xl font-bold text-gray-900 dark:text-white">LUSTEN</h1>
             </div>
             <div className="flex items-center space-x-4">
+              {/* Debug info - remove in production */}
+              {(
+                <div className="text-xs text-gray-500 mr-4 max-w-xs">
+                  Status: {status} | Session: {session ? 'Yes' : 'No'}
+                  {session && (
+                    <div>User: {session.user?.email?.substring(0, 20)}...</div>
+                  )}
+                </div>
+              )}
               {status === 'loading' ? (
                 <div className="text-gray-600 dark:text-gray-300">Loading...</div>
               ) : session ? (
@@ -130,7 +138,7 @@ export default function Home() {
               ) : (
                 <div className="flex space-x-4">
                   <button 
-                    onClick={() => signIn('spotify')}
+                    onClick={() => signIn('spotify', { callbackUrl: '/', redirect: true })}
                     className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
                   >
                     <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
@@ -211,60 +219,6 @@ export default function Home() {
           </div>
         )}
 
-        {/* Active Rooms */}
-        {rooms.length > 0 && (
-          <div>
-            <h3 className="text-2xl font-semibold text-gray-900 dark:text-white mb-6 text-center">
-              Active Rooms
-            </h3>
-            {rooms.length > 0 ? (
-              <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 max-w-4xl mx-auto">
-                {rooms.map((room) => (
-                  <div
-                    key={room.id}
-                    className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-6 hover:shadow-md transition-shadow"
-                  >
-                    <div className="flex justify-between items-start mb-4">
-                      <h4 className="text-lg font-semibold text-gray-900 dark:text-white">
-                        {room.name}
-                      </h4>
-                      <span className="bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-100 text-sm px-2 py-1 rounded-full">
-                        {room.listeners} listening
-                      </span>
-                    </div>
-                    
-                    {room.currentTrack && (
-                      <div className="mb-4">
-                        <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Now playing:</p>
-                        <p className="font-medium text-gray-900 dark:text-white">{room.currentTrack}</p>
-                        <p className="text-sm text-gray-600 dark:text-gray-400">{room.currentArtist}</p>
-                      </div>
-                    )}
-                    
-                    <button
-                      onClick={() => handleJoinRoom(room.id)}
-                      className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-2 px-4 rounded-lg font-medium transition-colors"
-                    >
-                      Join Room
-                    </button>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-center py-12">
-                <div className="w-24 h-24 mx-auto mb-6 bg-gradient-to-br from-indigo-100 to-purple-100 dark:from-gray-700 dark:to-gray-600 rounded-full flex items-center justify-center">
-                  <svg className="w-12 h-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
-                  </svg>
-                </div>
-                <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">No active rooms</h3>
-                <p className="text-gray-600 dark:text-gray-400 mb-6 max-w-md mx-auto">
-                  Be the first to start a shared listening experience! Create a room and invite others to join your music session.
-                </p>
-              </div>
-            )}
-          </div>
-        )}
       </main>
 
       <CreateRoomModal
