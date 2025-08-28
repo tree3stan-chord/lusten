@@ -24,6 +24,7 @@ sudo rsync -az --delete \
   --include '/package.json' \
   --include '/package-lock.json' \
   --include '/next.config.ts' \
+  --include '/.env.local' \
   --exclude '/.git/***' \
   --exclude '/.*' \
   --exclude '/deploy.sh' \
