@@ -31,7 +31,7 @@ export default function RoomPage({ params }: RoomPageProps) {
   // Initialize socket connection
   const userId = session?.user?.email || 'anonymous';
   const userName = session?.user?.name || 'Anonymous';
-  const { roomState, chatMessages, isConnected, emitTrackChange, emitPlaybackState, sendChatMessage } = useSocket(roomId, userId, isHost);
+  const { roomState, chatMessages, isConnected, syncEvents, emitTrackChange, emitPlaybackState, emitSeekPosition, sendChatMessage, clearSyncEvents } = useSocket(roomId, userId, isHost);
 
   useEffect(() => {
     params.then(({ id }) => {
@@ -112,10 +112,16 @@ export default function RoomPage({ params }: RoomPageProps) {
                 // Emit playback state to all room participants
                 emitPlaybackState(isPlaying, position || 0);
               }}
+              onSeek={(position) => {
+                // Emit seek position to all room participants
+                emitSeekPosition(position);
+              }}
               currentTrack={roomState?.currentTrack}
               syncedIsPlaying={roomState?.isPlaying}
               syncedPosition={roomState?.position}
               lastUpdate={roomState?.lastUpdate}
+              syncEvents={syncEvents}
+              onSyncEventHandled={clearSyncEvents}
             />
           </div>
 

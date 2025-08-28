@@ -20,35 +20,74 @@ interface SpotifyPlayerProps {
   isHost: boolean;
   onTrackChange?: (track: Track) => void;
   onPlayStateChange?: (isPlaying: boolean, position?: number) => void;
+  onSeek?: (position: number) => void;
   currentTrack?: Track;
   syncedIsPlaying?: boolean;
   syncedPosition?: number;
   lastUpdate?: number;
+  syncEvents?: {
+    seekTo?: { position: number; timestamp: number }
+  };
+  onSyncEventHandled?: () => void;
 }
 
 export default function SpotifyPlayer({ 
   isHost, 
   onTrackChange, 
   onPlayStateChange,
+  onSeek: _onSeek, // Prefix with underscore to indicate intentionally unused
   currentTrack: syncedTrack,
   syncedIsPlaying,
   syncedPosition,
-  lastUpdate
+  lastUpdate,
+  syncEvents,
+  onSyncEventHandled
 }: SpotifyPlayerProps) {
   const { data: session } = useSession();
   const {
     isReady,
     currentTrack,
     isPlaying,
+    position,
     play,
     pause,
     skipToNext,
     skipToPrevious,
+    seekToPosition,
+    lastSyncTime,
   } = useSpotifyPlayer();
 
   // Use synced data if available (for non-hosts), otherwise use local player state
   const displayTrack = !isHost && syncedTrack ? syncedTrack : currentTrack;
   const displayIsPlaying = !isHost && syncedIsPlaying !== undefined ? syncedIsPlaying : isPlaying;
+
+  // Handle sync events (seek commands from host)
+  React.useEffect(() => {
+    if (!isHost && syncEvents?.seekTo && seekToPosition) {
+      const { position: seekPosition } = syncEvents.seekTo;
+      console.log('Syncing to position:', seekPosition);
+      seekToPosition(seekPosition * 1000); // Convert to milliseconds
+      onSyncEventHandled?.();
+    }
+  }, [syncEvents, seekToPosition, isHost, onSyncEventHandled]);
+
+  // Position sync for new joiners (non-hosts)
+  React.useEffect(() => {
+    if (!isHost && syncedPosition !== undefined && lastUpdate && seekToPosition) {
+      const now = Date.now();
+      const timeSinceUpdate = (now - lastUpdate) / 1000; // Convert to seconds
+      const currentSyncPosition = syncedPosition + (syncedIsPlaying ? timeSinceUpdate : 0);
+      
+      // Only sync if we're off by more than 2 seconds
+      const currentPos = position / 1000; // Convert to seconds
+      const positionDiff = Math.abs(currentPos - currentSyncPosition);
+      
+      if (positionDiff > 2 && now - lastSyncTime > 5000) { // Don't sync too frequently
+        console.log('Position sync needed:', { currentPos, currentSyncPosition, diff: positionDiff });
+        seekToPosition(currentSyncPosition * 1000); // Convert to milliseconds
+      }
+    }
+  }, [isHost, syncedPosition, syncedIsPlaying, lastUpdate, position, seekToPosition, lastSyncTime]);
 
   // Notify parent components of state changes (only for hosts)
   React.useEffect(() => {
@@ -59,9 +98,18 @@ export default function SpotifyPlayer({
 
   React.useEffect(() => {
     if (isHost && onPlayStateChange !== undefined) {
-      onPlayStateChange(isPlaying);
+      onPlayStateChange(isPlaying, position);
     }
-  }, [isHost, isPlaying, onPlayStateChange]);
+  }, [isHost, isPlaying, position, onPlayStateChange]);
+
+  // Host seeking functionality (for future progress bar implementation)
+  // const handleHostSeek = React.useCallback(async (newPosition: number) => {
+  //   if (isHost && onSeek && seekToPosition) {
+  //     const positionSeconds = newPosition / 1000;
+  //     onSeek(positionSeconds);
+  //     await seekToPosition(newPosition);
+  //   }
+  // }, [isHost, onSeek, seekToPosition]);
 
   if (!session) {
     return (

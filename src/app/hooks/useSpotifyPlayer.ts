@@ -21,6 +21,8 @@ declare global {
   interface Window {
     onSpotifyWebPlaybackSDKReady: () => void;
     Spotify: SpotifyWebPlaybackSDK;
+    spotifySDKReady?: boolean;
+    initializeSpotifyPlayer?: () => void;
   }
 }
 
@@ -54,15 +56,15 @@ export const useSpotifyPlayer = () => {
   const [isReady, setIsReady] = useState(false);
   const [currentTrack, setCurrentTrack] = useState<Track | null>(null);
   const [playerState, setPlayerState] = useState<PlayerState | null>(null);
+  const [lastSyncTime, setLastSyncTime] = useState<number>(0);
 
   useEffect(() => {
     // @ts-expect-error - NextAuth v4 session extension
     if (!session?.accessToken) return;
 
-    const script = document.querySelector('script[src="https://sdk.scdn.co/spotify-player.js"]');
-    if (!script) return;
+    const initializePlayer = () => {
+      if (!window.Spotify) return;
 
-    window.onSpotifyWebPlaybackSDKReady = () => {
       const spotifyPlayer = new window.Spotify.Player({
         name: 'Lusten Web Player',
         getOAuthToken: (cb: (token: string) => void) => {
@@ -101,14 +103,21 @@ export const useSpotifyPlayer = () => {
       setPlayer(spotifyPlayer);
     };
 
-    // If SDK is already loaded, initialize immediately
-    if (window.Spotify) {
-      window.onSpotifyWebPlaybackSDKReady();
+    // Set up the initialization function for the global callback
+    window.initializeSpotifyPlayer = initializePlayer;
+
+    // Check if SDK is already ready
+    if (window.spotifySDKReady && window.Spotify) {
+      initializePlayer();
     }
 
     return () => {
       if (player) {
         player.disconnect();
+      }
+      // Clean up global reference
+      if (window.initializeSpotifyPlayer === initializePlayer) {
+        window.initializeSpotifyPlayer = undefined;
       }
     };
     // @ts-expect-error - NextAuth v4 session extension
@@ -188,6 +197,39 @@ export const useSpotifyPlayer = () => {
     // @ts-expect-error - NextAuth v4 session extension
   }, [session?.accessToken]);
 
+  const seekToPosition = useCallback(async (positionMs: number) => {
+    // @ts-expect-error - NextAuth v4 session extension
+    if (!session?.accessToken || !deviceId) return;
+
+    try {
+      await fetch(`https://api.spotify.com/v1/me/player/seek?position_ms=${Math.round(positionMs)}&device_id=${deviceId}`, {
+        method: 'PUT',
+        headers: {
+          // @ts-expect-error - NextAuth v4 session extension
+          'Authorization': `Bearer ${session.accessToken}`,
+        },
+      });
+      setLastSyncTime(Date.now());
+    } catch (error) {
+      console.error('Failed to seek:', error);
+    }
+    // @ts-expect-error - NextAuth v4 session extension
+  }, [session?.accessToken, deviceId]);
+
+  const getCurrentPosition = useCallback(async (): Promise<number> => {
+    if (!player) return 0;
+    
+    try {
+      const state = await (player as unknown as { getCurrentState: () => Promise<{ position?: number }> }).getCurrentState();
+      if (state) {
+        return state.position || 0;
+      }
+    } catch (error) {
+      console.error('Failed to get current position:', error);
+    }
+    return 0;
+  }, [player]);
+
   return {
     player,
     deviceId,
@@ -195,10 +237,14 @@ export const useSpotifyPlayer = () => {
     currentTrack,
     playerState,
     isPlaying: playerState ? !playerState.paused : false,
+    position: playerState ? playerState.position : 0,
     play,
     pause,
     skipToNext,
     skipToPrevious,
     setVolume,
+    seekToPosition,
+    getCurrentPosition,
+    lastSyncTime,
   };
 };

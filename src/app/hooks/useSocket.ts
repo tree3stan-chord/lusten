@@ -19,6 +19,7 @@ interface RoomState {
   isPlaying: boolean
   position: number
   lastUpdate: number
+  serverTime?: number
 }
 
 interface ChatMessage {
@@ -33,94 +34,132 @@ export const useSocket = (roomId: string, userId: string, isHost: boolean) => {
   const [roomState, setRoomState] = useState<RoomState | null>(null)
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   const [isConnected, setIsConnected] = useState(false)
+  const [syncEvents, setSyncEvents] = useState<{
+    seekTo?: { position: number; timestamp: number }
+  }>({})
 
   useEffect(() => {
-    const newSocket = io(process.env.NODE_ENV === 'production' 
-      ? 'https://lusten.musicsian.com' 
-      : 'http://localhost:3000', {
-      path: '/api/socket'
+    if (!roomId || !userId) return
+
+    const newSocket = io('/', {
+      forceNew: true
     })
 
+    setSocket(newSocket)
+
     newSocket.on('connect', () => {
-      console.log('Connected to Socket.io server')
+      console.log('Socket connected:', newSocket.id)
       setIsConnected(true)
       
-      // Join the room
+      // Join room after connection
       newSocket.emit('join-room', { roomId, userId, isHost })
     })
 
     newSocket.on('disconnect', () => {
-      console.log('Disconnected from Socket.io server')
+      console.log('Socket disconnected')
       setIsConnected(false)
     })
 
     newSocket.on('room-state', (state: RoomState) => {
+      console.log('Room state received:', state)
       setRoomState(state)
     })
 
-    newSocket.on('track-changed', (track) => {
+    newSocket.on('track-changed', (track: RoomState['currentTrack']) => {
+      console.log('Track changed received:', track)
       setRoomState(prev => prev ? { ...prev, currentTrack: track } : null)
     })
 
-    newSocket.on('playback-updated', ({ isPlaying, position, timestamp }) => {
+    newSocket.on('playback-updated', ({ isPlaying, position, timestamp, serverTime }) => {
+      console.log('Playback updated:', { isPlaying, position })
       setRoomState(prev => prev ? { 
         ...prev, 
         isPlaying, 
         position, 
-        lastUpdate: timestamp 
+        lastUpdate: timestamp,
+        serverTime 
       } : null)
     })
 
-    newSocket.on('user-joined', ({ userId: joinedUserId, userCount }) => {
+    newSocket.on('seek-to-position', ({ position, timestamp, serverTime }) => {
+      console.log('Seek to position:', position)
+      setSyncEvents({ seekTo: { position, timestamp } })
       setRoomState(prev => prev ? { 
         ...prev, 
-        users: [...prev.users, joinedUserId] 
-      } : null)
-    })
-
-    newSocket.on('user-left', ({ userId: leftUserId, userCount }) => {
-      setRoomState(prev => prev ? { 
-        ...prev, 
-        users: prev.users.filter(id => id !== leftUserId) 
+        position, 
+        lastUpdate: timestamp,
+        serverTime 
       } : null)
     })
 
     newSocket.on('chat-message', (message: ChatMessage) => {
+      console.log('Chat message received:', message)
       setChatMessages(prev => [...prev, message])
+    })
+
+    newSocket.on('user-joined', ({ userId: joinedUserId, userCount }) => {
+      console.log(`User ${joinedUserId} joined. Total users: ${userCount}`)
+      setRoomState(prev => prev ? { 
+        ...prev, 
+        users: [...prev.users.filter(u => u !== joinedUserId), joinedUserId]
+      } : null)
+    })
+
+    newSocket.on('user-left', ({ userId: leftUserId, userCount }) => {
+      console.log(`User ${leftUserId} left. Total users: ${userCount}`)
+      setRoomState(prev => prev ? { 
+        ...prev, 
+        users: prev.users.filter(u => u !== leftUserId)
+      } : null)
     })
 
     newSocket.on('room-closed', (reason: string) => {
       console.log('Room closed:', reason)
-      // Handle room closure (redirect to home, show message, etc.)
+      setRoomState(null)
     })
 
     newSocket.on('error', (error: string) => {
       console.error('Socket error:', error)
     })
 
-    setSocket(newSocket)
-
+    // Cleanup function
     return () => {
+      console.log('Cleaning up socket connection')
       newSocket.emit('leave-room', { roomId, userId })
       newSocket.disconnect()
     }
   }, [roomId, userId, isHost])
 
-  const emitTrackChange = (track: any) => {
+  const emitTrackChange = (track: RoomState['currentTrack']) => {
     if (socket && isHost) {
+      console.log('Track changed:', track?.name)
       socket.emit('track-change', { roomId, track, userId })
     }
   }
 
   const emitPlaybackState = (isPlaying: boolean, position: number) => {
     if (socket && isHost) {
+      console.log('Playback state changed:', { isPlaying, position })
       socket.emit('playback-state', { roomId, isPlaying, position, userId })
     }
   }
 
+  const emitSeekPosition = (position: number) => {
+    if (socket && isHost) {
+      console.log('Seek position:', position)
+      socket.emit('seek-position', { roomId, position, userId })
+    }
+  }
+
+  const clearSyncEvents = () => {
+    setSyncEvents({})
+  }
+
   const sendChatMessage = (message: string, userName: string) => {
     if (socket) {
-      // Add to local messages immediately
+      socket.emit('chat-message', { roomId, message, userId, userName })
+      
+      // Add to local messages immediately for sender
       const chatMessage: ChatMessage = {
         message,
         userId,
@@ -128,9 +167,7 @@ export const useSocket = (roomId: string, userId: string, isHost: boolean) => {
         timestamp: Date.now()
       }
       setChatMessages(prev => [...prev, chatMessage])
-      
-      // Send to others
-      socket.emit('chat-message', { roomId, message, userId, userName })
+      console.log('Chat message sent:', message)
     }
   }
 
@@ -139,8 +176,11 @@ export const useSocket = (roomId: string, userId: string, isHost: boolean) => {
     roomState,
     chatMessages,
     isConnected,
+    syncEvents,
     emitTrackChange,
     emitPlaybackState,
-    sendChatMessage
+    emitSeekPosition,
+    sendChatMessage,
+    clearSyncEvents
   }
 }
