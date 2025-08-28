@@ -1,7 +1,10 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useSession } from 'next-auth/react';
 import Link from 'next/link';
+import SpotifyPlayer from '../../components/SpotifyPlayer';
+import { useSocket } from '../../hooks/useSocket';
 
 interface RoomData {
   id: string;
@@ -19,34 +22,40 @@ interface RoomPageProps {
 }
 
 export default function RoomPage({ params }: RoomPageProps) {
+  const { data: session } = useSession();
   const [room, setRoom] = useState<RoomData | null>(null);
   const [message, setMessage] = useState('');
-  const [messages, setMessages] = useState<Array<{ user: string; text: string; timestamp: Date }>>([]);
+  const [roomId, setRoomId] = useState<string>('');
+  const [isHost, setIsHost] = useState(false);
+
+  // Initialize socket connection
+  const userId = session?.user?.email || 'anonymous';
+  const userName = session?.user?.name || 'Anonymous';
+  const { roomState, chatMessages, isConnected, emitTrackChange, emitPlaybackState, sendChatMessage } = useSocket(roomId, userId, isHost);
 
   useEffect(() => {
     params.then(({ id }) => {
-      // Simulate loading room data
+      setRoomId(id);
+      
+      // Determine if user is host - for now, first user to join is host
+      // In a real app, this would be determined by the backend
+      const userIsHost = session?.user !== undefined;
+      setIsHost(userIsHost);
+      
+      // Initialize room data
       setRoom({
         id,
         name: `Room ${id}`,
-        hostName: 'Host User',
-        currentTrack: {
-          name: 'Sample Track',
-          artist: 'Sample Artist'
-        },
-        listeners: ['User1', 'User2', 'You']
+        hostName: userIsHost ? userName : 'Unknown Host',
+        listeners: []
       });
     });
-  }, [params]);
+  }, [params, session, userName]);
 
-  const sendMessage = (e: React.FormEvent) => {
+  const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
     if (message.trim()) {
-      setMessages(prev => [...prev, {
-        user: 'You',
-        text: message.trim(),
-        timestamp: new Date()
-      }]);
+      sendChatMessage(message.trim(), userName);
       setMessage('');
     }
   };
@@ -76,8 +85,12 @@ export default function RoomPage({ params }: RoomPageProps) {
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white">{room.name}</h2>
             </div>
             <div className="flex items-center space-x-2">
-              <span className="bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-100 text-sm px-3 py-1 rounded-full">
-                {room.listeners.length} listening
+              <span className={`text-sm px-3 py-1 rounded-full ${
+                isConnected 
+                  ? 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-100' 
+                  : 'bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-100'
+              }`}>
+                {isConnected ? `${roomState?.users.length || 0} listening` : 'Disconnected'}
               </span>
             </div>
           </div>
@@ -88,56 +101,22 @@ export default function RoomPage({ params }: RoomPageProps) {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* Music Player Section */}
           <div className="lg:col-span-2">
-            <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-8">
-              <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-6">Now Playing</h3>
-              
-              {room.currentTrack ? (
-                <div className="text-center">
-                  <div className="bg-gradient-to-br from-indigo-100 to-purple-100 dark:from-gray-700 dark:to-gray-600 w-48 h-48 rounded-xl mx-auto mb-6 flex items-center justify-center">
-                    <svg className="w-24 h-24 text-gray-400" fill="currentColor" viewBox="0 0 24 24">
-                      <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
-                    </svg>
-                  </div>
-                  
-                  <h4 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
-                    {room.currentTrack.name}
-                  </h4>
-                  <p className="text-lg text-gray-600 dark:text-gray-300 mb-6">
-                    {room.currentTrack.artist}
-                  </p>
-                  
-                  {/* Spotify Player Placeholder */}
-                  <div className="bg-gray-100 dark:bg-gray-700 rounded-lg p-4 mb-4">
-                    <div className="flex items-center justify-center space-x-4">
-                      <button className="p-2 text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white">
-                        <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
-                          <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/>
-                        </svg>
-                      </button>
-                      <button className="p-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full">
-                        <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
-                          <path d="M8 5v14l11-7z"/>
-                        </svg>
-                      </button>
-                      <button className="p-2 text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white">
-                        <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
-                          <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/>
-                        </svg>
-                      </button>
-                    </div>
-                  </div>
-                  
-                  <p className="text-sm text-gray-500 dark:text-gray-400">
-                    Only {room.hostName} can control playback
-                  </p>
-                </div>
-              ) : (
-                <div className="text-center text-gray-500 dark:text-gray-400">
-                  <p>No track currently playing</p>
-                  <p className="text-sm mt-2">Waiting for {room.hostName} to start music...</p>
-                </div>
-              )}
-            </div>
+            <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-6">Now Playing</h3>
+            <SpotifyPlayer 
+              isHost={isHost}
+              onTrackChange={(track) => {
+                // Emit track change to all room participants
+                emitTrackChange(track);
+              }}
+              onPlayStateChange={(isPlaying, position) => {
+                // Emit playback state to all room participants
+                emitPlaybackState(isPlaying, position || 0);
+              }}
+              currentTrack={roomState?.currentTrack}
+              syncedIsPlaying={roomState?.isPlaying}
+              syncedPosition={roomState?.position}
+              lastUpdate={roomState?.lastUpdate}
+            />
           </div>
 
           {/* Chat Section */}
@@ -148,21 +127,23 @@ export default function RoomPage({ params }: RoomPageProps) {
               </div>
               
               <div className="flex-1 p-4 overflow-y-auto">
-                {messages.length === 0 ? (
+                {chatMessages.length === 0 ? (
                   <p className="text-gray-500 dark:text-gray-400 text-sm">No messages yet. Start the conversation!</p>
                 ) : (
                   <div className="space-y-3">
-                    {messages.map((msg, idx) => (
+                    {chatMessages.map((msg, idx) => (
                       <div key={idx} className="text-sm">
-                        <span className="font-medium text-indigo-600 dark:text-indigo-400">{msg.user}:</span>
-                        <span className="ml-2 text-gray-900 dark:text-white">{msg.text}</span>
+                        <span className="font-medium text-indigo-600 dark:text-indigo-400">
+                          {msg.userId === userId ? 'You' : msg.userName}:
+                        </span>
+                        <span className="ml-2 text-gray-900 dark:text-white">{msg.message}</span>
                       </div>
                     ))}
                   </div>
                 )}
               </div>
               
-              <form onSubmit={sendMessage} className="p-4 border-t border-gray-200 dark:border-gray-700">
+              <form onSubmit={handleSendMessage} className="p-4 border-t border-gray-200 dark:border-gray-700">
                 <div className="flex gap-2">
                   <input
                     type="text"
