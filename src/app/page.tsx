@@ -1,103 +1,148 @@
-import Image from "next/image";
+'use client';
+
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
+import CreateRoomModal from './components/CreateRoomModal';
+
+interface Room {
+  id: string;
+  name: string;
+  currentTrack?: string;
+  currentArtist?: string;
+  listeners: number;
+}
 
 export default function Home() {
-  return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const [rooms, setRooms] = useState<Room[]>([
+    {
+      id: '1',
+      name: 'Chill Vibes',
+      currentTrack: 'Midnight City',
+      currentArtist: 'M83',
+      listeners: 5
+    },
+    {
+      id: '2',
+      name: 'Study Session',
+      currentTrack: 'Weightless',
+      currentArtist: 'Marconi Union',
+      listeners: 12
+    }
+  ]);
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const router = useRouter();
+
+  const handleCreateRoom = () => {
+    setIsCreateModalOpen(true);
+  };
+
+  const handleCreateRoomSubmit = (roomName: string) => {
+    const newRoomId = Math.random().toString(36).substr(2, 9);
+    const newRoom: Room = {
+      id: newRoomId,
+      name: roomName,
+      listeners: 1
+    };
+    setRooms(prev => [...prev, newRoom]);
+    setIsCreateModalOpen(false);
+    router.push(`/room/${newRoomId}`);
+  };
+
+  const handleJoinRoom = (roomId: string) => {
+    router.push(`/room/${roomId}`);
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+      {/* Navigation */}
+      <nav className="border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between items-center h-16">
+            <div className="flex-shrink-0">
+              <h1 className="text-2xl font-bold text-gray-900 dark:text-white">LUSTEN</h1>
+            </div>
+            <div className="flex space-x-4">
+              <button className="text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white px-3 py-2 text-sm font-medium">
+                Sign In
+              </button>
+              <button className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+                Sign Up
+              </button>
+            </div>
+          </div>
         </div>
+      </nav>
+
+      {/* Main Content */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        <div className="text-center mb-12">
+          <h2 className="text-3xl font-bold text-gray-900 dark:text-white mb-4">
+            Listen Together
+          </h2>
+          <p className="text-lg text-gray-600 dark:text-gray-300 mb-8 max-w-2xl mx-auto">
+            Create shared listening experiences with friends. Host a room or join others to enjoy music together in real-time.
+          </p>
+          
+          {/* Create Room Button */}
+          <button
+            onClick={handleCreateRoom}
+            className="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white px-8 py-4 rounded-full text-lg font-medium transition-all duration-200 shadow-lg hover:shadow-xl transform hover:scale-105 flex items-center gap-2 mx-auto"
+          >
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+            </svg>
+            Create Room
+          </button>
+        </div>
+
+        {/* Active Rooms */}
+        {rooms.length > 0 && (
+          <div>
+            <h3 className="text-2xl font-semibold text-gray-900 dark:text-white mb-6 text-center">
+              Active Rooms
+            </h3>
+            <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 max-w-4xl mx-auto">
+              {rooms.map((room) => (
+                <div
+                  key={room.id}
+                  className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-6 hover:shadow-md transition-shadow"
+                >
+                  <div className="flex justify-between items-start mb-4">
+                    <h4 className="text-lg font-semibold text-gray-900 dark:text-white">
+                      {room.name}
+                    </h4>
+                    <span className="bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-100 text-sm px-2 py-1 rounded-full">
+                      {room.listeners} listening
+                    </span>
+                  </div>
+                  
+                  {room.currentTrack && (
+                    <div className="mb-4">
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Now playing:</p>
+                      <p className="font-medium text-gray-900 dark:text-white">{room.currentTrack}</p>
+                      <p className="text-sm text-gray-600 dark:text-gray-400">{room.currentArtist}</p>
+                    </div>
+                  )}
+                  
+                  <button
+                    onClick={() => handleJoinRoom(room.id)}
+                    className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-2 px-4 rounded-lg font-medium transition-colors"
+                  >
+                    Join Room
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+
+      <CreateRoomModal
+        isOpen={isCreateModalOpen}
+        onClose={() => setIsCreateModalOpen(false)}
+        onCreateRoom={handleCreateRoomSubmit}
+      />
     </div>
   );
 }
