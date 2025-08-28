@@ -37,6 +37,53 @@ app.prepare().then(() => {
   io.on('connection', (socket) => {
     console.log('User connected:', socket.id)
 
+    socket.on('get-public-rooms', () => {
+      const publicRooms = []
+      for (const [roomId, room] of rooms) {
+        if (room.isPublic) {
+          publicRooms.push({
+            id: room.id,
+            name: room.name,
+            currentTrack: room.currentTrack?.name,
+            currentArtist: room.currentTrack?.artists?.[0]?.name,
+            listeners: room.users.size
+          })
+        }
+      }
+      socket.emit('public-rooms-list', publicRooms)
+    })
+
+    socket.on('create-room', ({ roomId, roomName, userId, isPublic }) => {
+      console.log(`User ${userId} creating room ${roomId} (${isPublic ? 'public' : 'private'}): ${roomName}`)
+      
+      if (!rooms.has(roomId)) {
+        rooms.set(roomId, {
+          id: roomId,
+          name: roomName,
+          hostId: userId,
+          users: new Set([userId]),
+          isPlaying: false,
+          position: 0,
+          lastUpdate: Date.now(),
+          isPublic: isPublic,
+          createdAt: Date.now()
+        })
+        
+        socket.emit('room-created', { roomId, roomName })
+        
+        // Notify all clients about new public room
+        if (isPublic) {
+          socket.broadcast.emit('public-room-created', {
+            id: roomId,
+            name: roomName,
+            listeners: 1
+          })
+        }
+      } else {
+        socket.emit('error', 'Room already exists')
+      }
+    })
+
     socket.on('join-room', ({ roomId, userId, isHost }) => {
       console.log(`User ${userId} joining room ${roomId} as ${isHost ? 'host' : 'listener'}`)
       
@@ -45,11 +92,15 @@ app.prepare().then(() => {
       if (!rooms.has(roomId)) {
         if (isHost) {
           rooms.set(roomId, {
+            id: roomId,
+            name: `Room ${roomId}`,
             hostId: userId,
             users: new Set([userId]),
             isPlaying: false,
             position: 0,
-            lastUpdate: Date.now()
+            lastUpdate: Date.now(),
+            isPublic: false,
+            createdAt: Date.now()
           })
         } else {
           socket.emit('error', 'Room does not exist')
