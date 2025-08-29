@@ -8,6 +8,7 @@ import { useSession } from 'next-auth/react';
 interface Track {
   id: string;
   name: string;
+  uri?: string;
   artists: Array<{ name: string }>;
   album: {
     name: string;
@@ -71,39 +72,126 @@ export default function SpotifyPlayer({
     }
   }, [syncEvents, seekToPosition, isHost, onSyncEventHandled]);
 
-  // Activate device when listeners receive new tracks or join a room with active playback
+  // Activate device and play synced track for listeners
   React.useEffect(() => {
-    if (!isHost && syncedTrack && activateDevice && isReady && syncedIsPlaying) {
-      console.log('Activating device for synced track:', syncedTrack.name);
-      activateDevice();
+    if (!isHost && syncedTrack && activateDevice && play && isReady) {
+      console.log('Listener: Switching to synced track:', syncedTrack.name);
+      
+      const syncToTrack = async () => {
+        try {
+          // First activate the device
+          await activateDevice();
+          
+          // Then play the synced track
+          const trackUri = syncedTrack.uri || `spotify:track:${syncedTrack.id}`;
+          await play(trackUri);
+          
+          // Wait a moment for the track to start loading before seeking
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          // Seek to the correct position if available
+          if (syncedPosition !== undefined && lastUpdate && seekToPosition) {
+            const now = Date.now();
+            const timeSinceUpdate = (now - lastUpdate) / 1000;
+            // Add extra buffer time to account for track switching delay
+            const bufferTime = 1.0; // 1 second buffer
+            const targetPosition = syncedPosition + (syncedIsPlaying ? timeSinceUpdate + bufferTime : 0);
+            
+            console.log('Listener: Seeking to synced position:', {
+              originalPosition: syncedPosition,
+              timeSinceUpdate: Math.floor(timeSinceUpdate * 10) / 10,
+              bufferTime,
+              targetPosition: Math.floor(targetPosition * 10) / 10,
+              targetSeconds: Math.floor(targetPosition)
+            });
+            
+            if (targetPosition > 0) {
+              await seekToPosition(targetPosition * 1000); // Convert to milliseconds
+              console.log('Listener: Seek completed');
+            }
+          }
+          
+          // Handle play/pause state
+          if (syncedIsPlaying) {
+            // Track should be playing - it already is from play() call
+            console.log('Listener: Track is playing (synced)');
+          } else {
+            // Track should be paused
+            console.log('Listener: Pausing to match host state');
+            await pause();
+          }
+          
+          console.log('Listener: Successfully synced to track and position');
+        } catch (error) {
+          console.error('Listener: Failed to switch to synced track:', error);
+        }
+      };
+      
+      syncToTrack();
     }
-  }, [isHost, syncedTrack, syncedIsPlaying, activateDevice, isReady]);
+  }, [isHost, syncedTrack, activateDevice, play, pause, seekToPosition, syncedPosition, syncedIsPlaying, lastUpdate, isReady]);
 
-  // Position sync for new joiners (non-hosts)
-  const lastSyncCheck = React.useRef<number>(0);
+  // Handle real-time playback state changes for listeners (play/pause during playback)
+  const lastPlaybackStateRef = React.useRef<boolean | undefined>(undefined);
   
   React.useEffect(() => {
-    if (!isHost && syncedPosition !== undefined && lastUpdate && seekToPosition) {
+    if (!isHost && syncedIsPlaying !== undefined && syncedIsPlaying !== lastPlaybackStateRef.current && displayTrack) {
+      lastPlaybackStateRef.current = syncedIsPlaying;
+      
+      const handlePlaybackChange = async () => {
+        try {
+          if (syncedIsPlaying) {
+            console.log('Listener: Host resumed playback - resuming');
+            await play(); // Resume playback
+          } else {
+            console.log('Listener: Host paused playback - pausing');
+            await pause(); // Pause playback
+          }
+        } catch (error) {
+          console.error('Listener: Failed to sync playback state:', error);
+        }
+      };
+      
+      handlePlaybackChange();
+    }
+  }, [isHost, syncedIsPlaying, play, pause, displayTrack]);
+
+  // Ongoing position sync for listeners (more aggressive initially, then backs off)
+  const lastSyncCheck = React.useRef<number>(0);
+  const syncCount = React.useRef<number>(0);
+  
+  React.useEffect(() => {
+    if (!isHost && syncedPosition !== undefined && lastUpdate && seekToPosition && displayTrack) {
       const now = Date.now();
       
-      // Only check sync every 5 seconds to prevent constant re-renders
-      if (now - lastSyncCheck.current < 5000) return;
+      // More frequent syncing for the first few attempts, then back off
+      const syncInterval = syncCount.current < 3 ? 2000 : 5000; // 2s initially, then 5s
       
-      const timeSinceUpdate = (now - lastUpdate) / 1000; // Convert to seconds
+      if (now - lastSyncCheck.current < syncInterval) return;
+      
+      const timeSinceUpdate = (now - lastUpdate) / 1000;
       const currentSyncPosition = syncedPosition + (syncedIsPlaying ? timeSinceUpdate : 0);
       
-      // Only sync if we're off by more than 2 seconds
-      const currentPos = position / 1000; // Convert to seconds
+      // Be more aggressive about syncing initially
+      const syncThreshold = syncCount.current < 3 ? 1.5 : 3.0; // 1.5s initially, then 3s
+      const currentPos = position / 1000;
       const positionDiff = Math.abs(currentPos - currentSyncPosition);
       
-      if (positionDiff > 2 && now - lastSyncTime > 5000) { // Don't sync too frequently
-        console.log('Position sync needed:', { currentPos, currentSyncPosition, diff: positionDiff });
-        seekToPosition(currentSyncPosition * 1000); // Convert to milliseconds
+      if (positionDiff > syncThreshold && now - lastSyncTime > 3000) {
+        console.log('Ongoing position sync:', { 
+          currentPos: Math.floor(currentPos), 
+          targetPos: Math.floor(currentSyncPosition), 
+          diff: Math.floor(positionDiff * 10) / 10,
+          syncAttempt: syncCount.current + 1
+        });
+        
+        seekToPosition(currentSyncPosition * 1000);
         lastSyncCheck.current = now;
+        syncCount.current += 1;
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isHost, syncedPosition, syncedIsPlaying, lastUpdate, seekToPosition, lastSyncTime]); // Removed position from deps
+  }, [isHost, syncedPosition, syncedIsPlaying, lastUpdate, seekToPosition, lastSyncTime, displayTrack]); // Removed position from deps
 
   // Notify parent components of state changes (only for hosts)
   const prevTrackRef = React.useRef<string | null>(null);

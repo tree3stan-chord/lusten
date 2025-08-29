@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import SpotifyPlayer from '../../components/SpotifyPlayer';
@@ -33,6 +33,17 @@ export default function RoomPage({ params }: RoomPageProps) {
   const userName = session?.user?.name || 'Anonymous';
   const { roomState, chatMessages, isConnected, syncEvents, emitTrackChange, emitPlaybackState, emitSeekPosition, sendChatMessage, clearSyncEvents } = useSocket(roomId, userId, isHost);
 
+  // Update host status based on room state
+  React.useEffect(() => {
+    if (roomState && userId) {
+      const shouldBeHost = roomState.hostId === userId;
+      if (shouldBeHost !== isHost) {
+        console.log(`Updating host status: ${userId} should be host: ${shouldBeHost}`);
+        setIsHost(shouldBeHost);
+      }
+    }
+  }, [roomState, userId, isHost]);
+
   useEffect(() => {
     let mounted = true;
     
@@ -41,9 +52,10 @@ export default function RoomPage({ params }: RoomPageProps) {
       
       setRoomId(id);
       
-      // Determine if user is host - for now, first user to join is host
-      // In a real app, this would be determined by the backend
-      const userIsHost = session?.user !== undefined;
+      // Determine if user is host - check if they created this room
+      // For now, we'll check if the user ID matches the room's host from the room state
+      // The server will ultimately determine this
+      const userIsHost = false; // Default to listener, server will correct this
       setIsHost(userIsHost);
       
       // Initialize room data
