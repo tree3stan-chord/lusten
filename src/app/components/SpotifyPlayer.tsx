@@ -55,7 +55,6 @@ export default function SpotifyPlayer({
     skipToPrevious,
     seekToPosition,
     transferPlayback,
-    lastSyncTime,
   } = useSpotifyPlayer(isHost);
 
   // Use synced data if available (for non-hosts), otherwise use local player state

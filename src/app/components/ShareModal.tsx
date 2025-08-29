@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
+import Image from 'next/image';
 
 interface ShareModalProps {
   isOpen: boolean;
@@ -17,11 +18,11 @@ export default function ShareModal({ isOpen, onClose, roomName, roomUrl }: Share
   // Generate QR code when modal opens
   useEffect(() => {
     if (isOpen && roomUrl) {
-      generateQRCode(roomUrl);
+      generateQRCode();
     }
   }, [isOpen, roomUrl]);
 
-  const generateQRCode = async (text: string) => {
+  const generateQRCode = async () => {
     try {
       // Simple QR code generation using HTML5 Canvas
       const canvas = canvasRef.current;
@@ -102,7 +103,7 @@ export default function ShareModal({ isOpen, onClose, roomName, roomUrl }: Share
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700">
           <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-            Share "{roomName}"
+            Share &ldquo;{roomName}&rdquo;
           </h3>
           <button
             onClick={onClose}
@@ -186,7 +187,7 @@ export default function ShareModal({ isOpen, onClose, roomName, roomUrl }: Share
                   style={{ display: qrCodeDataUrl ? 'none' : 'block' }}
                 />
                 {qrCodeDataUrl && (
-                  <img 
+                  <Image 
                     src={qrCodeDataUrl} 
                     alt="QR Code" 
                     className="border rounded-lg"
