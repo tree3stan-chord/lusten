@@ -56,7 +56,7 @@ export default function SpotifyPlayer({
     seekToPosition,
     transferPlayback,
     lastSyncTime,
-  } = useSpotifyPlayer();
+  } = useSpotifyPlayer(isHost);
 
   // Use synced data if available (for non-hosts), otherwise use local player state
   const displayTrack = !isHost && syncedTrack ? syncedTrack : currentTrack;
