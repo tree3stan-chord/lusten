@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import SpotifyPlayer from '../../components/SpotifyPlayer';
@@ -25,6 +25,7 @@ export default function RoomPage({ params }: RoomPageProps) {
   const { data: session } = useSession();
   const [room, setRoom] = useState<RoomData | null>(null);
   const [message, setMessage] = useState('');
+  const chatContainerRef = useRef<HTMLDivElement>(null);
   const [roomId, setRoomId] = useState<string>('');
   const [isHost, setIsHost] = useState(false);
 
@@ -101,6 +102,46 @@ export default function RoomPage({ params }: RoomPageProps) {
     emitSeekPosition(position);
   }, [emitSeekPosition]);
 
+  // Auto-scroll chat to bottom when new messages arrive
+  useEffect(() => {
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+    }
+  }, [chatMessages]);
+
+  const handleShareRoom = useCallback(async () => {
+    const roomUrl = window.location.href;
+    const shareData = {
+      title: `Join my music room: ${room?.name}`,
+      text: `Listen to music together in real-time!`,
+      url: roomUrl,
+    };
+
+    try {
+      // Try native share API first (works on mobile and some desktop browsers)
+      if (navigator.share) {
+        await navigator.share(shareData);
+        return;
+      }
+      
+      // Fallback to clipboard
+      await navigator.clipboard.writeText(roomUrl);
+      
+      // Show success feedback (you could add a toast notification here)
+      alert('Room link copied to clipboard!');
+    } catch (error) {
+      console.error('Error sharing room:', error);
+      // Final fallback - select text for manual copy
+      const textArea = document.createElement('textarea');
+      textArea.value = roomUrl;
+      document.body.appendChild(textArea);
+      textArea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textArea);
+      alert('Room link copied to clipboard!');
+    }
+  }, [room?.name]);
+
   if (!room) {
     return (
       <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
@@ -125,7 +166,16 @@ export default function RoomPage({ params }: RoomPageProps) {
               <span className="text-gray-400">•</span>
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white">{room.name}</h2>
             </div>
-            <div className="flex items-center space-x-2">
+            <div className="flex items-center space-x-3">
+              <button
+                onClick={() => handleShareRoom()}
+                className="flex items-center space-x-1 px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.367 2.684 3 3 0 00-5.367-2.684z" />
+                </svg>
+                <span>Share</span>
+              </button>
               <span className={`text-sm px-3 py-1 rounded-full ${
                 isConnected 
                   ? 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-100' 
@@ -164,7 +214,7 @@ export default function RoomPage({ params }: RoomPageProps) {
                 <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Chat</h3>
               </div>
               
-              <div className="flex-1 p-4 overflow-y-auto">
+              <div ref={chatContainerRef} className="flex-1 p-4 overflow-y-auto">
                 {chatMessages.length === 0 ? (
                   <p className="text-gray-500 dark:text-gray-400 text-sm">No messages yet. Start the conversation!</p>
                 ) : (
