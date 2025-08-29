@@ -66,7 +66,7 @@ export const useSpotifyPlayer = () => {
       if (!window.Spotify) return;
 
       const spotifyPlayer = new window.Spotify.Player({
-        name: 'Lusten Web Player',
+        name: `Lusten (${session?.user?.name || 'User'})`,
         getOAuthToken: (cb: (token: string) => void) => {
           // @ts-expect-error - NextAuth v4 session extension
           cb(session.accessToken!);
@@ -129,7 +129,8 @@ export const useSpotifyPlayer = () => {
     if (!session?.accessToken || !deviceId) return;
 
     try {
-      await fetch('https://api.spotify.com/v1/me/player', {
+      console.log('Activating device:', deviceId);
+      const response = await fetch('https://api.spotify.com/v1/me/player', {
         method: 'PUT',
         body: JSON.stringify({
           device_ids: [deviceId],
@@ -141,9 +142,20 @@ export const useSpotifyPlayer = () => {
           'Authorization': `Bearer ${session.accessToken}`,
         },
       });
-      console.log('Device activated:', deviceId);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Device activation failed: ${response.status} ${errorText}`);
+      }
+
+      console.log('Device activated successfully:', deviceId);
+      
+      // Wait a moment for device activation to complete
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
     } catch (error) {
       console.error('Failed to activate device:', error);
+      throw error;
     }
     // @ts-expect-error - NextAuth v4 session extension
   }, [session?.accessToken, deviceId]);
@@ -255,6 +267,56 @@ export const useSpotifyPlayer = () => {
     return 0;
   }, [player]);
 
+  const transferPlayback = useCallback(async (trackUri: string, position: number = 0, shouldPlay: boolean = true) => {
+    // @ts-expect-error - NextAuth v4 session extension
+    if (!session?.accessToken || !deviceId) return;
+
+    try {
+      console.log('Transferring playback to:', trackUri, 'at position:', position, 'shouldPlay:', shouldPlay);
+      
+      // First activate the device to ensure it can receive playback
+      await activateDevice();
+      
+      // Stop current playback if any
+      await pause();
+      
+      // Small delay to ensure clean state
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      // Start playing the specific track with position
+      const response = await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          uris: [trackUri],
+          position_ms: Math.round(position)
+        }),
+        headers: {
+          'Content-Type': 'application/json',
+          // @ts-expect-error - NextAuth v4 session extension
+          'Authorization': `Bearer ${session.accessToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Transfer playback failed: ${response.status} ${errorText}`);
+      }
+
+      // If we should be paused, pause after starting
+      if (!shouldPlay) {
+        await new Promise(resolve => setTimeout(resolve, 200));
+        await pause();
+      }
+
+      console.log('Playback transfer completed successfully');
+      
+    } catch (error) {
+      console.error('Failed to transfer playback:', error);
+      throw error;
+    }
+    // @ts-expect-error - NextAuth v4 session extension
+  }, [session?.accessToken, deviceId, activateDevice, pause]);
+
   return {
     player,
     deviceId,
@@ -271,6 +333,7 @@ export const useSpotifyPlayer = () => {
     seekToPosition,
     getCurrentPosition,
     activateDevice,
+    transferPlayback,
     lastSyncTime,
   };
 };
