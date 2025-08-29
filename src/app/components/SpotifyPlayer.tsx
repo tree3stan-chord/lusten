@@ -53,6 +53,7 @@ export default function SpotifyPlayer({
     skipToNext,
     skipToPrevious,
     seekToPosition,
+    activateDevice,
     lastSyncTime,
   } = useSpotifyPlayer();
 
@@ -69,6 +70,14 @@ export default function SpotifyPlayer({
       onSyncEventHandled?.();
     }
   }, [syncEvents, seekToPosition, isHost, onSyncEventHandled]);
+
+  // Activate device when listeners receive new tracks or join a room with active playback
+  React.useEffect(() => {
+    if (!isHost && syncedTrack && activateDevice && isReady && syncedIsPlaying) {
+      console.log('Activating device for synced track:', syncedTrack.name);
+      activateDevice();
+    }
+  }, [isHost, syncedTrack, syncedIsPlaying, activateDevice, isReady]);
 
   // Position sync for new joiners (non-hosts)
   const lastSyncCheck = React.useRef<number>(0);

@@ -124,6 +124,30 @@ export const useSpotifyPlayer = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.accessToken]); // Removed player from dependencies to prevent infinite loop
 
+  const activateDevice = useCallback(async () => {
+    // @ts-expect-error - NextAuth v4 session extension
+    if (!session?.accessToken || !deviceId) return;
+
+    try {
+      await fetch('https://api.spotify.com/v1/me/player', {
+        method: 'PUT',
+        body: JSON.stringify({
+          device_ids: [deviceId],
+          play: false
+        }),
+        headers: {
+          'Content-Type': 'application/json',
+          // @ts-expect-error - NextAuth v4 session extension
+          'Authorization': `Bearer ${session.accessToken}`,
+        },
+      });
+      console.log('Device activated:', deviceId);
+    } catch (error) {
+      console.error('Failed to activate device:', error);
+    }
+    // @ts-expect-error - NextAuth v4 session extension
+  }, [session?.accessToken, deviceId]);
+
   const play = useCallback(async (spotifyUri?: string) => {
     // @ts-expect-error - NextAuth v4 session extension
     if (!session?.accessToken || !deviceId) return;
@@ -246,6 +270,7 @@ export const useSpotifyPlayer = () => {
     setVolume,
     seekToPosition,
     getCurrentPosition,
+    activateDevice,
     lastSyncTime,
   };
 };

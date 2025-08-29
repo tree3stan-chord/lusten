@@ -69,7 +69,7 @@ export const useSocket = (roomId: string, userId: string, isHost: boolean) => {
     })
 
     newSocket.on('track-changed', (track: RoomState['currentTrack']) => {
-      console.log('Track changed received:', track)
+      console.log('🎵 LISTENER: Received track change:', track?.name, track)
       setRoomState(prev => prev ? { ...prev, currentTrack: track } : null)
     })
 
@@ -135,8 +135,10 @@ export const useSocket = (roomId: string, userId: string, isHost: boolean) => {
 
   const emitTrackChange = useCallback((track: RoomState['currentTrack']) => {
     if (socket && isHostRef.current) {
-      console.log('Track changed:', track?.name)
+      console.log('🎵 HOST: Emitting track change:', track?.name, track)
       socket.emit('track-change', { roomId, track, userId })
+    } else {
+      console.log('🎵 HOST: NOT emitting track change - socket:', !!socket, 'isHost:', isHostRef.current, 'track:', track?.name)
     }
   }, [socket, roomId, userId])
 
