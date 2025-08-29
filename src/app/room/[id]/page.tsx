@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import SpotifyPlayer from '../../components/SpotifyPlayer';
+import ShareModal from '../../components/ShareModal';
 import { useSocket } from '../../hooks/useSocket';
 
 interface RoomData {
@@ -28,6 +29,7 @@ export default function RoomPage({ params }: RoomPageProps) {
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const [roomId, setRoomId] = useState<string>('');
   const [isHost, setIsHost] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
 
   // Initialize socket connection
   const userId = session?.user?.email || 'anonymous';
@@ -109,38 +111,9 @@ export default function RoomPage({ params }: RoomPageProps) {
     }
   }, [chatMessages]);
 
-  const handleShareRoom = useCallback(async () => {
-    const roomUrl = window.location.href;
-    const shareData = {
-      title: `Join my music room: ${room?.name}`,
-      text: `Listen to music together in real-time!`,
-      url: roomUrl,
-    };
-
-    try {
-      // Try native share API first (works on mobile and some desktop browsers)
-      if (navigator.share) {
-        await navigator.share(shareData);
-        return;
-      }
-      
-      // Fallback to clipboard
-      await navigator.clipboard.writeText(roomUrl);
-      
-      // Show success feedback (you could add a toast notification here)
-      alert('Room link copied to clipboard!');
-    } catch (error) {
-      console.error('Error sharing room:', error);
-      // Final fallback - select text for manual copy
-      const textArea = document.createElement('textarea');
-      textArea.value = roomUrl;
-      document.body.appendChild(textArea);
-      textArea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textArea);
-      alert('Room link copied to clipboard!');
-    }
-  }, [room?.name]);
+  const handleShareRoom = useCallback(() => {
+    setShowShareModal(true);
+  }, []);
 
   if (!room) {
     return (
@@ -168,7 +141,7 @@ export default function RoomPage({ params }: RoomPageProps) {
             </div>
             <div className="flex items-center space-x-3">
               <button
-                onClick={() => handleShareRoom()}
+                onClick={handleShareRoom}
                 className="flex items-center space-x-1 px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm transition-colors"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -253,6 +226,14 @@ export default function RoomPage({ params }: RoomPageProps) {
           </div>
         </div>
       </div>
+
+      {/* Share Modal */}
+      <ShareModal
+        isOpen={showShareModal}
+        onClose={() => setShowShareModal(false)}
+        roomName={room.name}
+        roomUrl={typeof window !== 'undefined' ? window.location.href : ''}
+      />
     </div>
   );
 }
