@@ -1,5 +1,6 @@
 import NextAuth from 'next-auth'
 import SpotifyProvider from 'next-auth/providers/spotify'
+import { createUser } from '../../../../lib/database'
 
 // @ts-expect-error - NextAuth v4 compatibility with Next.js 15
 const handler = NextAuth({
@@ -154,6 +155,20 @@ const handler = NextAuth({
         if (session?.user && token) {
           session.accessToken = token.accessToken
           session.user.id = token.sub || token.userId
+          
+          // Auto-create user profile if not exists
+          try {
+            await createUser({
+              spotify_id: session.user.id,
+              name: session.user.name || 'Anonymous',
+              avatar_url: session.user.image || null,
+              profile_room_id: null
+            });
+            console.log('User profile ensured for:', session.user.email);
+          } catch (error) {
+            console.error('Failed to create user profile:', error);
+          }
+          
           console.log('Session created successfully for:', session.user.email);
         } else {
           console.log('Session callback - missing session or token');

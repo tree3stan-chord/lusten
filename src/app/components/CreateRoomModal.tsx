@@ -5,21 +5,21 @@ import { useState } from 'react';
 interface CreateRoomModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onCreateRoom: (roomName: string, isPublic: boolean) => void;
+  onCreateRoom: (roomName: string, roomType: 'private' | 'public' | 'profile') => void;
 }
 
 export default function CreateRoomModal({ isOpen, onClose, onCreateRoom }: CreateRoomModalProps) {
   const [roomName, setRoomName] = useState('');
-  const [isPublic, setIsPublic] = useState(false);
+  const [roomType, setRoomType] = useState<'private' | 'public' | 'profile'>('private');
 
   if (!isOpen) return null;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (roomName.trim()) {
-      onCreateRoom(roomName.trim(), isPublic);
+      onCreateRoom(roomName.trim(), roomType);
       setRoomName('');
-      setIsPublic(false);
+      setRoomType('private');
     }
   };
 
@@ -55,36 +55,57 @@ export default function CreateRoomModal({ isOpen, onClose, onCreateRoom }: Creat
           </div>
           
           <div className="mb-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <label htmlFor="isPublic" className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                  Room Visibility
-                </label>
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                  {isPublic ? 'Anyone can discover and join this room' : 'Only people with the link can join'}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsPublic(!isPublic)}
-                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 ${
-                  isPublic ? 'bg-indigo-600' : 'bg-gray-200 dark:bg-gray-600'
-                }`}
-              >
-                <span
-                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                    isPublic ? 'translate-x-6' : 'translate-x-1'
-                  }`}
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
+              Room Type
+            </label>
+            <div className="space-y-3">
+              {/* Private Room */}
+              <label className="flex items-start space-x-3 cursor-pointer">
+                <input
+                  type="radio"
+                  name="roomType"
+                  value="private"
+                  checked={roomType === 'private'}
+                  onChange={(e) => setRoomType(e.target.value as 'private')}
+                  className="mt-1 text-indigo-600"
                 />
-              </button>
-            </div>
-            <div className="mt-2 flex items-center text-sm">
-              <span className={`mr-2 ${!isPublic ? 'text-indigo-600 dark:text-indigo-400 font-medium' : 'text-gray-500'}`}>
-                🔒 Private
-              </span>
-              <span className={`${isPublic ? 'text-indigo-600 dark:text-indigo-400 font-medium' : 'text-gray-500'}`}>
-                🌍 Public
-              </span>
+                <div>
+                  <div className="font-medium text-gray-900 dark:text-white">🔒 Private</div>
+                  <div className="text-sm text-gray-500 dark:text-gray-400">Only people with the link can join</div>
+                </div>
+              </label>
+              
+              {/* Public Room */}
+              <label className="flex items-start space-x-3 cursor-pointer">
+                <input
+                  type="radio"
+                  name="roomType"
+                  value="public"
+                  checked={roomType === 'public'}
+                  onChange={(e) => setRoomType(e.target.value as 'public')}
+                  className="mt-1 text-indigo-600"
+                />
+                <div>
+                  <div className="font-medium text-gray-900 dark:text-white">🌍 Public</div>
+                  <div className="text-sm text-gray-500 dark:text-gray-400">Discoverable on homepage (temporary)</div>
+                </div>
+              </label>
+              
+              {/* Profile Room */}
+              <label className="flex items-start space-x-3 cursor-pointer">
+                <input
+                  type="radio"
+                  name="roomType"
+                  value="profile"
+                  checked={roomType === 'profile'}
+                  onChange={(e) => setRoomType(e.target.value as 'profile')}
+                  className="mt-1 text-indigo-600"
+                />
+                <div>
+                  <div className="font-medium text-gray-900 dark:text-white">👤 My Profile Room</div>
+                  <div className="text-sm text-gray-500 dark:text-gray-400">Persistent room on your profile (replaces existing)</div>
+                </div>
+              </label>
             </div>
           </div>
           

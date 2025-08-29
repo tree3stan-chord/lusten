@@ -9,6 +9,8 @@ import CreateRoomModal from './components/CreateRoomModal';
 interface Room {
   id: string;
   name: string;
+  type: 'public' | 'profile';
+  hostId: string;
   currentTrack?: string;
   currentArtist?: string;
   listeners: number;
@@ -61,7 +63,7 @@ export default function Home() {
     }
   };
 
-  const handleCreateRoomSubmit = (roomName: string, isPublic: boolean) => {
+  const handleCreateRoomSubmit = (roomName: string, roomType: 'private' | 'public' | 'profile') => {
     try {
       if (!socket || !session?.user?.email) {
         alert('Unable to create room. Please try again.');
@@ -76,7 +78,7 @@ export default function Home() {
         roomId: newRoomId,
         roomName,
         userId,
-        isPublic
+        roomType
       });
 
       // Listen for room created confirmation
@@ -179,7 +181,7 @@ export default function Home() {
         {publicRooms.length > 0 && (
           <div className="mb-12">
             <h3 className="text-2xl font-semibold text-gray-900 dark:text-white mb-6 text-center">
-              Public Rooms
+              Discover Rooms
             </h3>
             <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 max-w-4xl mx-auto">
               {publicRooms.map((room) => (
@@ -192,7 +194,9 @@ export default function Home() {
                       {room.name}
                     </h4>
                     <div className="flex items-center gap-2">
-                      <span className="text-xs text-gray-500 dark:text-gray-400">🌍 Public</span>
+                      <span className="text-xs text-gray-500 dark:text-gray-400">
+                        {room.type === 'profile' ? '👤 Profile' : '🌍 Public'}
+                      </span>
                       <span className="bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-100 text-sm px-2 py-1 rounded-full">
                         {room.listeners} listening
                       </span>

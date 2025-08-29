@@ -51,44 +51,66 @@ app.prepare().then(() => {
     console.log('User connected:', socket.id)
 
     socket.on('get-public-rooms', () => {
-      const publicRooms = []
+      const discoverableRooms = []
       for (const [roomId, room] of rooms) {
-        if (room.isPublic) {
-          publicRooms.push({
+        if (room.type === 'public' || room.type === 'profile') {
+          discoverableRooms.push({
             id: room.id,
             name: room.name,
+            type: room.type,
+            hostId: room.hostId,
             currentTrack: room.currentTrack?.name,
             currentArtist: room.currentTrack?.artists?.[0]?.name,
             listeners: room.users.size
           })
         }
       }
-      socket.emit('public-rooms-list', publicRooms)
+      socket.emit('public-rooms-list', discoverableRooms)
     })
 
-    socket.on('create-room', ({ roomId, roomName, userId, isPublic }) => {
-      console.log(`User ${userId} creating room ${roomId} (${isPublic ? 'public' : 'private'}): ${roomName}`)
+    socket.on('create-room', async ({ roomId, roomName, userId, roomType }) => {
+      console.log(`User ${userId} creating room ${roomId} (${roomType}): ${roomName}`)
+      logToEndpoint('room-create', { roomId, roomName, userId, roomType })
       
       if (!rooms.has(roomId)) {
+        // Save to database first
+        try {
+          await fetch(`${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/api/rooms/create`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              roomId,
+              roomName,
+              roomType,
+              ownerId: userId
+            })
+          });
+        } catch (error) {
+          console.error('Failed to save room to database:', error);
+        }
+
+        // Create in-memory room for socket management
         rooms.set(roomId, {
           id: roomId,
           name: roomName,
+          type: roomType, // 'private', 'public', or 'profile'
           hostId: userId,
           users: new Set([userId]),
           isPlaying: false,
           position: 0,
           lastUpdate: Date.now(),
-          isPublic: isPublic,
+          isPersistent: roomType === 'profile',
           createdAt: Date.now()
         })
         
         socket.emit('room-created', { roomId, roomName })
         
-        // Notify all clients about new public room
-        if (isPublic) {
+        // Notify all clients about new discoverable rooms (public or profile)
+        if (roomType === 'public' || roomType === 'profile') {
           socket.broadcast.emit('public-room-created', {
             id: roomId,
             name: roomName,
+            type: roomType,
             listeners: 1
           })
         }
@@ -168,8 +190,17 @@ app.prepare().then(() => {
         room.users.delete(userId)
         
         if (userId === room.hostId) {
-          rooms.delete(roomId)
-          io.to(roomId).emit('room-closed', 'Host left the room')
+          // Only delete room if it's not a persistent profile room
+          if (room.type !== 'profile') {
+            rooms.delete(roomId)
+            io.to(roomId).emit('room-closed', 'Host left the room')
+          } else {
+            // Profile room stays alive, just reset playback state
+            room.isPlaying = false
+            room.currentTrack = null
+            room.position = 0
+            io.to(roomId).emit('host-left', 'Host left, music stopped')
+          }
         } else {
           socket.to(roomId).emit('user-left', { userId, userCount: room.users.size })
         }
