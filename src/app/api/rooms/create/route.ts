@@ -15,8 +15,12 @@ export async function POST(request: NextRequest) {
       room = createRoom({
         id: roomId,
         name: roomName,
+        description: null,
         type: roomType,
-        owner_id: ownerId
+        owner_id: ownerId,
+        max_users: 50,
+        password: null,
+        is_active: true
       });
     }
     

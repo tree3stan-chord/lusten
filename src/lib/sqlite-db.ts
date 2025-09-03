@@ -35,8 +35,12 @@ function initializeDatabase() {
     CREATE TABLE IF NOT EXISTS rooms (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
+      description TEXT,
       type TEXT NOT NULL CHECK (type IN ('private', 'public', 'profile')),
       owner_id TEXT REFERENCES users(spotify_id) ON DELETE SET NULL,
+      max_users INTEGER DEFAULT 50,
+      password TEXT,
+      is_active BOOLEAN DEFAULT TRUE,
       created_at TEXT DEFAULT (datetime('now')),
       last_active TEXT DEFAULT (datetime('now'))
     );
@@ -50,6 +54,19 @@ function initializeDatabase() {
       created_at TEXT DEFAULT (datetime('now')),
       UNIQUE(user1_id, user2_id),
       CHECK(user1_id != user2_id)
+    );
+
+    -- Room bans table (for kicked/banned users)
+    CREATE TABLE IF NOT EXISTS room_bans (
+      id TEXT PRIMARY KEY,
+      room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(spotify_id) ON DELETE CASCADE,
+      banned_by TEXT NOT NULL REFERENCES users(spotify_id) ON DELETE CASCADE,
+      ban_type TEXT NOT NULL CHECK (ban_type IN ('kick', 'ban')) DEFAULT 'kick',
+      reason TEXT,
+      expires_at TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(room_id, user_id)
     );
 
     -- User status table (for Discord-style activity tracking)
@@ -71,6 +88,10 @@ function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_rooms_type ON rooms(type);
     CREATE INDEX IF NOT EXISTS idx_rooms_owner ON rooms(owner_id);
     CREATE INDEX IF NOT EXISTS idx_rooms_last_active ON rooms(last_active);
+    CREATE INDEX IF NOT EXISTS idx_rooms_active ON rooms(is_active);
+    CREATE INDEX IF NOT EXISTS idx_room_bans_room ON room_bans(room_id);
+    CREATE INDEX IF NOT EXISTS idx_room_bans_user ON room_bans(user_id);
+    CREATE INDEX IF NOT EXISTS idx_room_bans_expires ON room_bans(expires_at);
     CREATE INDEX IF NOT EXISTS idx_friendships_user1 ON friendships(user1_id);
     CREATE INDEX IF NOT EXISTS idx_friendships_user2 ON friendships(user2_id);
     CREATE INDEX IF NOT EXISTS idx_friendships_status ON friendships(status);
@@ -100,8 +121,12 @@ export interface User {
 export interface Room {
   id: string
   name: string
+  description: string | null
   type: 'private' | 'public' | 'profile'
   owner_id: string | null
+  max_users: number
+  password: string | null
+  is_active: boolean
   created_at: string
   last_active: string
 }
@@ -130,6 +155,17 @@ export interface UserStatus {
 
 export interface UserWithStatus extends User {
   status?: UserStatus
+}
+
+export interface RoomBan {
+  id: string
+  room_id: string
+  user_id: string
+  banned_by: string
+  ban_type: 'kick' | 'ban'
+  reason: string | null
+  expires_at: string | null
+  created_at: string
 }
 
 // User operations
@@ -189,11 +225,20 @@ export function createRoom(roomData: Omit<Room, 'created_at' | 'last_active'>): 
   const db = getDb()
   
   const stmt = db.prepare(`
-    INSERT INTO rooms (id, name, type, owner_id)
-    VALUES (?, ?, ?, ?)
+    INSERT INTO rooms (id, name, description, type, owner_id, max_users, password, is_active)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `)
   
-  stmt.run(roomData.id, roomData.name, roomData.type, roomData.owner_id)
+  stmt.run(
+    roomData.id, 
+    roomData.name, 
+    roomData.description,
+    roomData.type, 
+    roomData.owner_id,
+    roomData.max_users,
+    roomData.password,
+    roomData.is_active
+  )
   
   const room = db.prepare('SELECT * FROM rooms WHERE id = ?').get(roomData.id) as Room
   db.close()
@@ -265,8 +310,8 @@ export function createOrUpdateProfileRoom(userId: string, roomName: string): Roo
   
   // Create new profile room
   const stmt = db.prepare(`
-    INSERT INTO rooms (id, name, type, owner_id)
-    VALUES (?, ?, 'profile', ?)
+    INSERT INTO rooms (id, name, description, type, owner_id, max_users, password, is_active)
+    VALUES (?, ?, NULL, 'profile', ?, 50, NULL, TRUE)
   `)
   
   stmt.run(roomId, roomName, userId)
@@ -612,4 +657,199 @@ export function cleanupInactiveUsers(): number {
   
   db.close()
   return result.changes
+}
+
+// Room Management Functions
+
+export function getRoom(roomId: string): Room | null {
+  const db = getDb()
+  const room = db.prepare('SELECT * FROM rooms WHERE id = ?').get(roomId) as Room | undefined
+  db.close()
+  return room || null
+}
+
+export function updateRoomDetails(
+  roomId: string, 
+  updates: Partial<Omit<Room, 'id' | 'created_at'>>
+): Room | null {
+  const db = getDb()
+  
+  const updateFields = []
+  const updateValues = []
+  
+  if (updates.name !== undefined) {
+    updateFields.push('name = ?')
+    updateValues.push(updates.name)
+  }
+  if (updates.description !== undefined) {
+    updateFields.push('description = ?')
+    updateValues.push(updates.description)
+  }
+  if (updates.type !== undefined) {
+    updateFields.push('type = ?')
+    updateValues.push(updates.type)
+  }
+  if (updates.max_users !== undefined) {
+    updateFields.push('max_users = ?')
+    updateValues.push(updates.max_users)
+  }
+  if (updates.password !== undefined) {
+    updateFields.push('password = ?')
+    updateValues.push(updates.password)
+  }
+  if (updates.is_active !== undefined) {
+    updateFields.push('is_active = ?')
+    updateValues.push(updates.is_active)
+  }
+  
+  if (updateFields.length === 0) {
+    db.close()
+    return null
+  }
+  
+  updateFields.push('last_active = datetime(\'now\')')
+  updateValues.push(roomId)
+  
+  const result = db.prepare(`
+    UPDATE rooms 
+    SET ${updateFields.join(', ')}
+    WHERE id = ?
+  `).run(...updateValues)
+  
+  if (result.changes > 0) {
+    const room = db.prepare('SELECT * FROM rooms WHERE id = ?').get(roomId) as Room | undefined
+    db.close()
+    return room || null
+  }
+  
+  db.close()
+  return null
+}
+
+export function deleteRoomPermanently(roomId: string, deletedBy: string): boolean {
+  const db = getDb()
+  
+  try {
+    db.exec('BEGIN TRANSACTION')
+    
+    // Mark room as inactive first
+    db.prepare('UPDATE rooms SET is_active = FALSE WHERE id = ?').run(roomId)
+    
+    // Clear user status for users in this room
+    db.prepare('UPDATE user_status SET current_room_id = NULL WHERE current_room_id = ?').run(roomId)
+    
+    // Add a record of who deleted the room (optional)
+    // Could extend this with a room_history table if needed
+    
+    // Actually delete the room
+    const result = db.prepare('DELETE FROM rooms WHERE id = ?').run(roomId)
+    
+    db.exec('COMMIT')
+    db.close()
+    return result.changes > 0
+  } catch (error) {
+    db.exec('ROLLBACK')
+    db.close()
+    throw error
+  }
+}
+
+export function kickUserFromRoom(
+  roomId: string, 
+  userId: string, 
+  kickedBy: string, 
+  reason: string | null = null,
+  banType: 'kick' | 'ban' = 'kick'
+): boolean {
+  const db = getDb()
+  
+  try {
+    db.exec('BEGIN TRANSACTION')
+    
+    // Remove user from room in user_status
+    db.prepare('UPDATE user_status SET current_room_id = NULL WHERE user_id = ? AND current_room_id = ?')
+      .run(userId, roomId)
+    
+    // Add ban record
+    const banId = Math.random().toString(36).substr(2, 15)
+    db.prepare(`
+      INSERT OR REPLACE INTO room_bans (id, room_id, user_id, banned_by, ban_type, reason)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(banId, roomId, userId, kickedBy, banType, reason)
+    
+    db.exec('COMMIT')
+    db.close()
+    return true
+  } catch (error) {
+    db.exec('ROLLBACK')
+    db.close()
+    console.error('Error kicking user:', error)
+    return false
+  }
+}
+
+export function isUserBannedFromRoom(roomId: string, userId: string): boolean {
+  const db = getDb()
+  
+  const ban = db.prepare(`
+    SELECT * FROM room_bans 
+    WHERE room_id = ? AND user_id = ? 
+    AND (expires_at IS NULL OR expires_at > datetime('now'))
+  `).get(roomId, userId) as RoomBan | undefined
+  
+  db.close()
+  return !!ban
+}
+
+export function unbanUserFromRoom(roomId: string, userId: string): boolean {
+  const db = getDb()
+  
+  const result = db.prepare('DELETE FROM room_bans WHERE room_id = ? AND user_id = ?')
+    .run(roomId, userId)
+  
+  db.close()
+  return result.changes > 0
+}
+
+export function getRoomBans(roomId: string): Array<RoomBan & { user: User }> {
+  const db = getDb()
+  
+  const bans = db.prepare(`
+    SELECT rb.*, u.name, u.avatar_url, u.spotify_id
+    FROM room_bans rb
+    JOIN users u ON rb.user_id = u.spotify_id
+    WHERE rb.room_id = ?
+    AND (rb.expires_at IS NULL OR rb.expires_at > datetime('now'))
+    ORDER BY rb.created_at DESC
+  `).all(roomId) as Array<RoomBan & User>
+  
+  db.close()
+  
+  return bans.map(ban => ({
+    id: ban.id,
+    room_id: ban.room_id,
+    user_id: ban.user_id,
+    banned_by: ban.banned_by,
+    ban_type: ban.ban_type,
+    reason: ban.reason,
+    expires_at: ban.expires_at,
+    created_at: ban.created_at,
+    user: {
+      spotify_id: ban.spotify_id,
+      name: ban.name,
+      avatar_url: ban.avatar_url,
+      profile_room_id: ban.profile_room_id,
+      created_at: ban.created_at
+    }
+  }))
+}
+
+export function transferRoomOwnership(roomId: string, newOwnerId: string): boolean {
+  const db = getDb()
+  
+  const result = db.prepare('UPDATE rooms SET owner_id = ? WHERE id = ?')
+    .run(newOwnerId, roomId)
+  
+  db.close()
+  return result.changes > 0
 }
