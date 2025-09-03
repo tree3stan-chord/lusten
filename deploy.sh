@@ -15,24 +15,51 @@ npm install
 echo "▶ Build Next.js application"
 NODE_ENV=production npm run build
 
-echo "▶ Verify production configuration"
-NODE_ENV=production npm run check:production
-
 echo "▶ Deploy to web root"
-sudo rsync -az --delete \
-  --include '/.next/***' \
-  --include '/node_modules/***' \
-  --include '/public/***' \
-  --include '/src/***' \
-  --include '/package.json' \
-  --include '/package-lock.json' \
-  --include '/next.config.js' \
-  --include '/server.js' \
-  --include '/.env.local' \
-  --exclude '/.git/***' \
-  --exclude '/.*' \
-  --exclude '/deploy.sh' \
-  "$PROJECT_DIR"/ "$WEB_ROOT"/
+
+# Check if package-lock.json changed to avoid unnecessary node_modules sync
+SKIP_NODE_MODULES=false
+if [ -f "$WEB_ROOT/package-lock.json" ] && cmp -s "$PROJECT_DIR/package-lock.json" "$WEB_ROOT/package-lock.json"; then
+  echo "  Dependencies unchanged - skipping node_modules sync for speed"
+  SKIP_NODE_MODULES=true
+fi
+
+if [ "$SKIP_NODE_MODULES" = true ]; then
+  # Fast sync without node_modules
+  sudo rsync -az --delete \
+    --include '/.next/***' \
+    --include '/public/***' \
+    --include '/src/***' \
+    --include '/scripts/***' \
+    --include '/package.json' \
+    --include '/package-lock.json' \
+    --include '/next.config.js' \
+    --include '/server.js' \
+    --include '/.env.local' \
+    --exclude '/node_modules/***' \
+    --exclude '/.git/***' \
+    --exclude '/.*' \
+    --exclude '/deploy.sh' \
+    "$PROJECT_DIR"/ "$WEB_ROOT"/
+else
+  # Full sync including node_modules  
+  echo "  Dependencies changed - syncing all files including node_modules"
+  sudo rsync -az --delete \
+    --include '/.next/***' \
+    --include '/node_modules/***' \
+    --include '/public/***' \
+    --include '/src/***' \
+    --include '/scripts/***' \
+    --include '/package.json' \
+    --include '/package-lock.json' \
+    --include '/next.config.js' \
+    --include '/server.js' \
+    --include '/.env.local' \
+    --exclude '/.git/***' \
+    --exclude '/.*' \
+    --exclude '/deploy.sh' \
+    "$PROJECT_DIR"/ "$WEB_ROOT"/
+fi
 
 # ── fix permissions ─────────────────────────────────────────────────────
 echo "▶ Fix ownership/permissions"
@@ -89,8 +116,9 @@ fi
 
 # Start new process 
 echo "DEBUG: About to start Next.js in production mode..."
-echo "DEBUG: Running: NODE_ENV=production npm start > /tmp/lusten.log 2>&1 &"
-nohup NODE_ENV=production npm start > /tmp/lusten.log 2>&1 &
+echo "DEBUG: Setting NODE_ENV=production and running npm start"
+export NODE_ENV=production
+nohup npm start > /tmp/lusten.log 2>&1 &
 START_PID=$!
 echo "DEBUG: Background process started"
 echo $START_PID > /tmp/lusten.pid

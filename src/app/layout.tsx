@@ -35,15 +35,6 @@ export const metadata: Metadata = {
     ],
   },
   manifest: "/site.webmanifest",
-  viewport: {
-    width: "device-width",
-    initialScale: 1,
-    maximumScale: 1,
-  },
-  themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
-    { media: "(prefers-color-scheme: dark)", color: "#1f2937" },
-  ],
   openGraph: {
     type: "website",
     locale: "en_US",
@@ -57,6 +48,16 @@ export const metadata: Metadata = {
     title: "LUSTEN - Shared Listening Experience",
     description: "Create and join music rooms for synchronized listening with friends. Connect your Spotify and enjoy music together in real-time.",
   },
+};
+
+export const viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
+    { media: "(prefers-color-scheme: dark)", color: "#1f2937" },
+  ],
 };
 
 export default function RootLayout({

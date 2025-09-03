@@ -149,7 +149,7 @@ export const useSpotifyPlayer = (isHost: boolean = false) => {
       const response = await spotifyApi.put('https://api.spotify.com/v1/me/player', {
         device_ids: [deviceId],
         play: false
-      }, session as any);
+      }, session as unknown as { accessToken: string });
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -247,7 +247,7 @@ export const useSpotifyPlayer = (isHost: boolean = false) => {
         const response = await spotifyApi.put(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {
           uris: [trackUri],
           position_ms: Math.round(position)
-        }, session as any);
+        }, session as unknown as { accessToken: string });
 
         if (!response.ok) {
           const errorText = await response.text();
@@ -264,7 +264,7 @@ export const useSpotifyPlayer = (isHost: boolean = false) => {
         const response = await spotifyApi.put('https://api.spotify.com/v1/me/player/play', {
           uris: [trackUri],
           position_ms: Math.round(position)
-        }, session as any);
+        }, session as unknown as { accessToken: string });
 
         if (!response.ok) {
           const errorText = await response.text();
