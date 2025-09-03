@@ -13,7 +13,10 @@ echo "▶ Install dependencies"
 npm install
 
 echo "▶ Build Next.js application"
-npm run build
+NODE_ENV=production npm run build
+
+echo "▶ Verify production configuration"
+NODE_ENV=production npm run check:production
 
 echo "▶ Deploy to web root"
 sudo rsync -az --delete \
@@ -23,7 +26,7 @@ sudo rsync -az --delete \
   --include '/src/***' \
   --include '/package.json' \
   --include '/package-lock.json' \
-  --include '/next.config.ts' \
+  --include '/next.config.js' \
   --include '/server.js' \
   --include '/.env.local' \
   --exclude '/.git/***' \
@@ -85,9 +88,9 @@ else
 fi
 
 # Start new process 
-echo "DEBUG: About to start Next.js..."
-echo "DEBUG: Running: npm start > /tmp/lusten.log 2>&1 &"
-nohup npm start > /tmp/lusten.log 2>&1 &
+echo "DEBUG: About to start Next.js in production mode..."
+echo "DEBUG: Running: NODE_ENV=production npm start > /tmp/lusten.log 2>&1 &"
+nohup NODE_ENV=production npm start > /tmp/lusten.log 2>&1 &
 START_PID=$!
 echo "DEBUG: Background process started"
 echo $START_PID > /tmp/lusten.pid

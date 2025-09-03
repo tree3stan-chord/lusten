@@ -3,10 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack",
-    "build": "next build --turbopack",
-    "start": "node server.js",
-    "lint": "eslint"
+    "dev": "NODE_ENV=development next dev --turbopack",
+    "build": "NODE_ENV=production next build --turbopack",
+    "start": "NODE_ENV=production node server.js",
+    "start:dev": "NODE_ENV=development node server.js",
+    "lint": "eslint",
+    "clean": "rm -rf .next",
+    "rebuild": "npm run clean && npm run build",
+    "check:production": "node scripts/check-production.js"
   },
   "dependencies": {
     "@types/better-sqlite3": "^7.6.13",
