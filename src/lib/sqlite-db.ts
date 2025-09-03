@@ -27,6 +27,8 @@ function initializeDatabase() {
       spotify_id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       avatar_url TEXT,
+      custom_avatar_url TEXT,
+      avatar_updated_at TEXT,
       profile_room_id TEXT,
       created_at TEXT DEFAULT (datetime('now'))
     );
@@ -843,6 +845,49 @@ export function getRoomBans(roomId: string): Array<RoomBan & { user: User }> {
     }
   }))
 }
+
+// ── Avatar Management Functions ──────────────────────────────────────────
+
+export function updateUserAvatar(userId: string, avatarUrl: string): boolean {
+  const db = getDb()
+  
+  const result = db.prepare(`
+    UPDATE users 
+    SET custom_avatar_url = ?, avatar_updated_at = datetime('now')
+    WHERE spotify_id = ?
+  `).run(avatarUrl, userId)
+  
+  db.close()
+  return result.changes > 0
+}
+
+export function getUserAvatarInfo(userId: string): { custom_avatar_url: string | null; avatar_updated_at: string | null } | null {
+  const db = getDb()
+  
+  const result = db.prepare(`
+    SELECT custom_avatar_url, avatar_updated_at 
+    FROM users 
+    WHERE spotify_id = ?
+  `).get(userId) as { custom_avatar_url: string | null; avatar_updated_at: string | null } | undefined
+  
+  db.close()
+  return result || null
+}
+
+export function deleteUserAvatar(userId: string): boolean {
+  const db = getDb()
+  
+  const result = db.prepare(`
+    UPDATE users 
+    SET custom_avatar_url = NULL, avatar_updated_at = NULL
+    WHERE spotify_id = ?
+  `).run(userId)
+  
+  db.close()
+  return result.changes > 0
+}
+
+// ── Room Ownership Transfer ──────────────────────────────────────────────
 
 export function transferRoomOwnership(roomId: string, newOwnerId: string): boolean {
   const db = getDb()

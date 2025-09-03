@@ -5,6 +5,8 @@ import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
+import ProfileAvatar from '../../components/ProfileAvatar';
+import Avatar from '../../components/Avatar';
 
 interface User {
   spotify_id: string;
@@ -181,21 +183,17 @@ export default function ProfilePage({ params }: ProfilePageProps) {
         <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-8 mb-8">
           <div className="flex items-start space-x-6">
             {/* Avatar */}
-            <div className="w-24 h-24 bg-gradient-to-br from-indigo-100 to-purple-100 dark:from-gray-700 dark:to-gray-600 rounded-full flex items-center justify-center overflow-hidden">
-              {user.avatar_url ? (
-                <Image
-                  src={user.avatar_url}
-                  alt={user.name}
-                  width={96}
-                  height={96}
-                  className="w-full h-full object-cover"
-                />
-              ) : (
-                <svg className="w-12 h-12 text-gray-400" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M24 20.993V24H0v-2.996A14.977 14.977 0 0112.004 15c4.904 0 9.26 2.354 11.996 5.993zM16.002 8.999a4 4 0 11-8 0 4 4 0 018 0z" />
-                </svg>
-              )}
-            </div>
+            {isOwnProfile ? (
+              <ProfileAvatar size="2xl" />
+            ) : (
+              <Avatar
+                src={user.avatar_url}
+                alt={user.name}
+                size="2xl"
+                userId={user.spotify_id}
+                name={user.name}
+              />
+            )}
 
             {/* Profile Info */}
             <div className="flex-1">
