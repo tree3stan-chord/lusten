@@ -59,7 +59,7 @@ export default function Avatar({
   const displaySrc = hasError ? fallbackSrc : src;
 
   const baseClasses = `
-    inline-block rounded-full object-cover border-2 border-gray-200 dark:border-gray-600
+    block rounded-full object-cover object-center border-2 border-gray-200 dark:border-gray-600
     ${sizeClasses[size]}
     ${className}
   `.trim();
