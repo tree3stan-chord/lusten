@@ -1,0 +1,54 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Scaled up version for better quality -->
+  <!-- First eighth note with hipster head -->
+  <g id="note1">
+    <!-- Stem -->
+    <rect x="16" y="16" width="3" height="32" fill="#2563eb" rx="1.5"/>
+    
+    <!-- Quirky hipster note head (beard and glasses) -->
+    <ellipse cx="14" cy="46" rx="8" ry="6" fill="#2563eb"/>
+    <!-- Beard -->
+    <path d="M6 46 C6 52 10 54 14 54 C18 54 22 52 22 46 Z" fill="#8b5cf6"/>
+    <!-- Glasses frame -->
+    <circle cx="11" cy="43" r="3.6" fill="none" stroke="#1f2937" stroke-width="1.6"/>
+    <circle cx="17" cy="43" r="3.6" fill="none" stroke="#1f2937" stroke-width="1.6"/>
+    <!-- Bridge -->
+    <line x1="14.6" y1="43" x2="13.4" y2="43" stroke="#1f2937" stroke-width="1.2"/>
+    <!-- Hipster mustache -->
+    <path d="M10 44.4 Q14 43.6 18 44.4" stroke="#8b5cf6" stroke-width="1.6" fill="none"/>
+  </g>
+
+  <!-- Second eighth note with hipster head -->
+  <g id="note2">
+    <!-- Stem -->
+    <rect x="45" y="12" width="3" height="36" fill="#7c3aed" rx="1.5"/>
+    
+    <!-- Quirky hipster note head (different style) -->
+    <ellipse cx="50" cy="46" rx="8" ry="6" fill="#7c3aed"/>
+    <!-- Trendy bow tie -->
+    <path d="M43 48 L46 46 L49 48 L46 50 Z" fill="#ef4444"/>
+    <path d="M51 48 L54 46 L57 48 L54 50 Z" fill="#ef4444"/>
+    <rect x="48.6" y="47" width="2.8" height="2" fill="#1f2937"/>
+    <!-- Monocle -->
+    <circle cx="46" cy="43" r="4" fill="none" stroke="#1f2937" stroke-width="1.6"/>
+    <line x1="42" y1="39" x2="40" y2="37" stroke="#1f2937" stroke-width="1.2"/>
+    <!-- Fancy mustache -->
+    <path d="M42 45 Q46 43.6 50 44.4 Q54 43.6 58 45" stroke="#10b981" stroke-width="2" fill="none"/>
+  </g>
+
+  <!-- Connecting beam -->
+  <path d="M19 16 L45 12 L48 14 L21 18 Z" fill="#4338ca"/>
+  
+  <!-- Musical flair - small decorative notes -->
+  <circle cx="30" cy="8" r="2" fill="#f59e0b" opacity="0.7"/>
+  <circle cx="34" cy="56" r="1.6" fill="#10b981" opacity="0.6"/>
+  
+  <!-- Subtle gradient overlay for depth -->
+  <defs>
+    <linearGradient id="noteGradLarge" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6366f1" stop-opacity="0.1"/>
+      <stop offset="100%" stop-color="#8b5cf6" stop-opacity="0.2"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" fill="url(#noteGradLarge)" rx="4"/>
+</svg>
