@@ -55,6 +55,7 @@ export default function SpotifyPlayer({
     skipToPrevious,
     seekToPosition,
     transferPlayback,
+    sessionHealth,
   } = useSpotifyPlayer(isHost);
 
   // Use synced data if available (for non-hosts), otherwise use local player state
@@ -160,6 +161,43 @@ export default function SpotifyPlayer({
     return (
       <div className="bg-gray-100 dark:bg-gray-700 rounded-lg p-4 text-center">
         <p className="text-gray-600 dark:text-gray-300">Please connect to Spotify to control playback</p>
+      </div>
+    );
+  }
+
+  // Show connection status if there are issues
+  if (sessionHealth?.hasError && sessionHealth?.canRetry) {
+    return (
+      <div className="bg-red-50 dark:bg-red-900/20 rounded-lg p-4 text-center border border-red-200 dark:border-red-800">
+        <div className="flex items-center justify-center mb-3">
+          <svg className="w-8 h-8 text-red-600 dark:text-red-400 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+          </svg>
+          <h3 className="text-lg font-medium text-red-800 dark:text-red-200">Connection Issue</h3>
+        </div>
+        <p className="text-red-700 dark:text-red-300 mb-4">
+          We&apos;re having trouble connecting to Spotify. Your session may have expired or there might be a network issue.
+        </p>
+        <button
+          onClick={sessionHealth.attemptRecovery}
+          className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors"
+        >
+          Try Again
+        </button>
+      </div>
+    );
+  }
+
+  if (sessionHealth?.isReconnecting) {
+    return (
+      <div className="bg-yellow-50 dark:bg-yellow-900/20 rounded-lg p-4 text-center border border-yellow-200 dark:border-yellow-800">
+        <div className="flex items-center justify-center mb-3">
+          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-yellow-600 mr-2"></div>
+          <h3 className="text-lg font-medium text-yellow-800 dark:text-yellow-200">Reconnecting</h3>
+        </div>
+        <p className="text-yellow-700 dark:text-yellow-300">
+          Reconnecting to Spotify... Please wait.
+        </p>
       </div>
     );
   }

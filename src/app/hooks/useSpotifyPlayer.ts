@@ -2,6 +2,8 @@
 
 import { useSession } from 'next-auth/react';
 import { useCallback, useEffect, useState } from 'react';
+import { spotifyApi } from '../../lib/spotify-api-client';
+import { useSessionHealth } from './useSessionHealth';
 
 interface SpotifyPlayer {
   addListener: (event: string, callback: (data: unknown) => void) => void;
@@ -58,9 +60,17 @@ export const useSpotifyPlayer = (isHost: boolean = false) => {
   const [playerState, setPlayerState] = useState<PlayerState | null>(null);
   const [lastSyncTime, setLastSyncTime] = useState<number>(0);
 
+  // Add session health monitoring
+  const sessionHealth = useSessionHealth({
+    checkInterval: 30000, // Check every 30 seconds for active music sessions
+    preemptiveRefreshTime: 300000, // Refresh 5 minutes before expiry
+    onConnectionStateChange: (state) => {
+      console.log(`useSpotifyPlayer: Connection state changed to: ${state}`);
+    }
+  });
+
   useEffect(() => {
-    // @ts-expect-error - NextAuth v4 session extension
-    if (!session?.accessToken) return;
+    if (!(session as unknown as { accessToken?: string })?.accessToken) return;
     
     // Only create Web SDK player for hosts
     if (!isHost) {
@@ -74,8 +84,10 @@ export const useSpotifyPlayer = (isHost: boolean = false) => {
       const spotifyPlayer = new window.Spotify.Player({
         name: `Lusten (${session?.user?.name || 'User'})`,
         getOAuthToken: (cb: (token: string) => void) => {
-          // @ts-expect-error - NextAuth v4 session extension
-          cb(session.accessToken!);
+          const accessToken = (session as unknown as { accessToken?: string })?.accessToken;
+          if (accessToken) {
+            cb(accessToken);
+          }
         },
         volume: 0.8,
       });
@@ -126,28 +138,18 @@ export const useSpotifyPlayer = (isHost: boolean = false) => {
         window.initializeSpotifyPlayer = undefined;
       }
     };
-    // @ts-expect-error - NextAuth v4 session extension
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session?.accessToken, isHost]); // Removed player from dependencies to prevent infinite loop
+  }, [session, isHost]); // Removed player from dependencies to prevent infinite loop
 
   const activateDevice = useCallback(async () => {
-    // @ts-expect-error - NextAuth v4 session extension
-    if (!session?.accessToken || !deviceId) return;
+    if (!(session as unknown as { accessToken?: string })?.accessToken || !deviceId) return;
 
     try {
       console.log('Activating device:', deviceId);
-      const response = await fetch('https://api.spotify.com/v1/me/player', {
-        method: 'PUT',
-        body: JSON.stringify({
-          device_ids: [deviceId],
-          play: false
-        }),
-        headers: {
-          'Content-Type': 'application/json',
-          // @ts-expect-error - NextAuth v4 session extension
-          'Authorization': `Bearer ${session.accessToken}`,
-        },
-      });
+      const response = await spotifyApi.put('https://api.spotify.com/v1/me/player', {
+        device_ids: [deviceId],
+        play: false
+      }, session as any);
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -163,101 +165,50 @@ export const useSpotifyPlayer = (isHost: boolean = false) => {
       console.error('Failed to activate device:', error);
       throw error;
     }
-    // @ts-expect-error - NextAuth v4 session extension
-  }, [session?.accessToken, deviceId]);
+  }, [session, deviceId]);
 
   const play = useCallback(async (spotifyUri?: string) => {
-    // @ts-expect-error - NextAuth v4 session extension
-    if (!session?.accessToken || !deviceId) return;
+    if (!(session as unknown as { accessToken?: string })?.accessToken || !deviceId) return;
 
     const body = spotifyUri ? { uris: [spotifyUri] } : undefined;
     
-    await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {
-      method: 'PUT',
-      body: JSON.stringify(body),
-      headers: {
-        'Content-Type': 'application/json',
-        // @ts-expect-error - NextAuth v4 session extension
-        'Authorization': `Bearer ${session.accessToken}`,
-      },
-    });
-    // @ts-expect-error - NextAuth v4 session extension
-  }, [session?.accessToken, deviceId]);
+    await spotifyApi.put(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, body, session);
+  }, [session, deviceId]);
 
   const pause = useCallback(async () => {
-    // @ts-expect-error - NextAuth v4 session extension
-    if (!session?.accessToken) return;
+    if (!(session as unknown as { accessToken?: string })?.accessToken) return;
 
-    await fetch('https://api.spotify.com/v1/me/player/pause', {
-      method: 'PUT',
-      headers: {
-        // @ts-expect-error - NextAuth v4 session extension
-        'Authorization': `Bearer ${session.accessToken}`,
-      },
-    });
-    // @ts-expect-error - NextAuth v4 session extension
-  }, [session?.accessToken]);
+    await spotifyApi.put('https://api.spotify.com/v1/me/player/pause', undefined, session);
+  }, [session]);
 
   const skipToNext = useCallback(async () => {
-    // @ts-expect-error - NextAuth v4 session extension
-    if (!session?.accessToken) return;
+    if (!(session as unknown as { accessToken?: string })?.accessToken) return;
 
-    await fetch('https://api.spotify.com/v1/me/player/next', {
-      method: 'POST',
-      headers: {
-        // @ts-expect-error - NextAuth v4 session extension
-        'Authorization': `Bearer ${session.accessToken}`,
-      },
-    });
-    // @ts-expect-error - NextAuth v4 session extension
-  }, [session?.accessToken]);
+    await spotifyApi.post('https://api.spotify.com/v1/me/player/next', undefined, session);
+  }, [session]);
 
   const skipToPrevious = useCallback(async () => {
-    // @ts-expect-error - NextAuth v4 session extension
-    if (!session?.accessToken) return;
+    if (!(session as unknown as { accessToken?: string })?.accessToken) return;
 
-    await fetch('https://api.spotify.com/v1/me/player/previous', {
-      method: 'POST',
-      headers: {
-        // @ts-expect-error - NextAuth v4 session extension
-        'Authorization': `Bearer ${session.accessToken}`,
-      },
-    });
-    // @ts-expect-error - NextAuth v4 session extension
-  }, [session?.accessToken]);
+    await spotifyApi.post('https://api.spotify.com/v1/me/player/previous', undefined, session);
+  }, [session]);
 
   const setVolume = useCallback(async (volume: number) => {
-    // @ts-expect-error - NextAuth v4 session extension
-    if (!session?.accessToken) return;
+    if (!(session as unknown as { accessToken?: string })?.accessToken) return;
 
-    await fetch(`https://api.spotify.com/v1/me/player/volume?volume_percent=${Math.round(volume * 100)}`, {
-      method: 'PUT',
-      headers: {
-        // @ts-expect-error - NextAuth v4 session extension
-        'Authorization': `Bearer ${session.accessToken}`,
-      },
-    });
-    // @ts-expect-error - NextAuth v4 session extension
-  }, [session?.accessToken]);
+    await spotifyApi.put(`https://api.spotify.com/v1/me/player/volume?volume_percent=${Math.round(volume * 100)}`, undefined, session);
+  }, [session]);
 
   const seekToPosition = useCallback(async (positionMs: number) => {
-    // @ts-expect-error - NextAuth v4 session extension
-    if (!session?.accessToken || !deviceId) return;
+    if (!(session as unknown as { accessToken?: string })?.accessToken || !deviceId) return;
 
     try {
-      await fetch(`https://api.spotify.com/v1/me/player/seek?position_ms=${Math.round(positionMs)}&device_id=${deviceId}`, {
-        method: 'PUT',
-        headers: {
-          // @ts-expect-error - NextAuth v4 session extension
-          'Authorization': `Bearer ${session.accessToken}`,
-        },
-      });
+      await spotifyApi.put(`https://api.spotify.com/v1/me/player/seek?position_ms=${Math.round(positionMs)}&device_id=${deviceId}`, undefined, session);
       setLastSyncTime(Date.now());
     } catch (error) {
       console.error('Failed to seek:', error);
     }
-    // @ts-expect-error - NextAuth v4 session extension
-  }, [session?.accessToken, deviceId]);
+  }, [session, deviceId]);
 
   const getCurrentPosition = useCallback(async (): Promise<number> => {
     if (!player) return 0;
@@ -274,8 +225,7 @@ export const useSpotifyPlayer = (isHost: boolean = false) => {
   }, [player]);
 
   const transferPlayback = useCallback(async (trackUri: string, position: number = 0, shouldPlay: boolean = true) => {
-    // @ts-expect-error - NextAuth v4 session extension
-    if (!session?.accessToken) return;
+    if (!(session as unknown as { accessToken?: string })?.accessToken) return;
 
     try {
       console.log('Transferring playback to:', trackUri, 'at position:', position, 'shouldPlay:', shouldPlay);
@@ -294,18 +244,10 @@ export const useSpotifyPlayer = (isHost: boolean = false) => {
         await new Promise(resolve => setTimeout(resolve, 100));
         
         // Start playing the specific track with position
-        const response = await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {
-          method: 'PUT',
-          body: JSON.stringify({
-            uris: [trackUri],
-            position_ms: Math.round(position)
-          }),
-          headers: {
-            'Content-Type': 'application/json',
-            // @ts-expect-error - NextAuth v4 session extension
-            'Authorization': `Bearer ${session.accessToken}`,
-          },
-        });
+        const response = await spotifyApi.put(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {
+          uris: [trackUri],
+          position_ms: Math.round(position)
+        }, session as any);
 
         if (!response.ok) {
           const errorText = await response.text();
@@ -319,18 +261,10 @@ export const useSpotifyPlayer = (isHost: boolean = false) => {
         }
       } else {
         // Listener: Use any active device (no specific device_id)
-        const response = await fetch('https://api.spotify.com/v1/me/player/play', {
-          method: 'PUT',
-          body: JSON.stringify({
-            uris: [trackUri],
-            position_ms: Math.round(position)
-          }),
-          headers: {
-            'Content-Type': 'application/json',
-            // @ts-expect-error - NextAuth v4 session extension
-            'Authorization': `Bearer ${session.accessToken}`,
-          },
-        });
+        const response = await spotifyApi.put('https://api.spotify.com/v1/me/player/play', {
+          uris: [trackUri],
+          position_ms: Math.round(position)
+        }, session as any);
 
         if (!response.ok) {
           const errorText = await response.text();
@@ -340,13 +274,7 @@ export const useSpotifyPlayer = (isHost: boolean = false) => {
         // If we should be paused, pause after starting
         if (!shouldPlay) {
           await new Promise(resolve => setTimeout(resolve, 200));
-          await fetch('https://api.spotify.com/v1/me/player/pause', {
-            method: 'PUT',
-            headers: {
-              // @ts-expect-error - NextAuth v4 session extension
-              'Authorization': `Bearer ${session.accessToken}`,
-            },
-          });
+          await spotifyApi.put('https://api.spotify.com/v1/me/player/pause', undefined, session);
         }
       }
 
@@ -356,13 +284,12 @@ export const useSpotifyPlayer = (isHost: boolean = false) => {
       console.error('Failed to transfer playback:', error);
       throw error;
     }
-    // @ts-expect-error - NextAuth v4 session extension
-  }, [session?.accessToken, isHost, deviceId, activateDevice, pause]);
+  }, [session, isHost, deviceId, activateDevice, pause]);
 
   return {
     player,
     deviceId,
-    isReady,
+    isReady: isReady && sessionHealth.isHealthy, // Only ready if both player and session are healthy
     currentTrack,
     playerState,
     isPlaying: playerState ? !playerState.paused : false,
@@ -377,5 +304,15 @@ export const useSpotifyPlayer = (isHost: boolean = false) => {
     activateDevice,
     transferPlayback,
     lastSyncTime,
+    // Session health information
+    sessionHealth: {
+      isHealthy: sessionHealth.isHealthy,
+      connectionState: sessionHealth.connectionState,
+      isReconnecting: sessionHealth.isReconnecting,
+      canRetry: sessionHealth.canRetry,
+      hasError: sessionHealth.hasError,
+      attemptRecovery: sessionHealth.attemptRecovery,
+      resetErrorState: sessionHealth.resetErrorState
+    }
   };
 };

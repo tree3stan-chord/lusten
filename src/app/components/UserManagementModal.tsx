@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Image from 'next/image';
 
 interface ConnectedUser {
@@ -48,13 +48,7 @@ export default function UserManagementModal({
   const [kickReason, setKickReason] = useState('');
   const [kickType, setKickType] = useState<'kick' | 'ban'>('kick');
 
-  useEffect(() => {
-    if (isOpen && isHost) {
-      fetchBannedUsers();
-    }
-  }, [isOpen, isHost, roomId]);
-
-  const fetchBannedUsers = async () => {
+  const fetchBannedUsers = useCallback(async () => {
     try {
       const response = await fetch(`/api/rooms/${roomId}/banned`);
       if (response.ok) {
@@ -64,7 +58,13 @@ export default function UserManagementModal({
     } catch (error) {
       console.error('Error fetching banned users:', error);
     }
-  };
+  }, [roomId]);
+
+  useEffect(() => {
+    if (isOpen && isHost) {
+      fetchBannedUsers();
+    }
+  }, [isOpen, isHost, fetchBannedUsers]);
 
   const handleKickUser = async (userId: string) => {
     if (!kickReason.trim() && kickType === 'ban') {
