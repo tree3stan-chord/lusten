@@ -69,6 +69,10 @@ sudo find "$WEB_ROOT" -type f -exec chmod 0644 {} +
 # Make next binary executable
 sudo chmod +x "$WEB_ROOT/node_modules/.bin/next"
 
+# Fix ownership of development .next directory to prevent future permission issues
+echo "▶ Fix development directory ownership"
+sudo chown -R $USER:$USER "$PROJECT_DIR/.next" 2>/dev/null || true
+
 # Create data directory for SQLite database
 echo "▶ Create data directory for SQLite"
 sudo mkdir -p "$WEB_ROOT/data"
