@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getRoomById } from '../../../../lib/database';
+import { getRoomById } from '../../../../lib/sqlite-db';
 
 interface RouteParams {
   params: Promise<{ roomId: string }>;
@@ -9,7 +9,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
     const { roomId } = await params;
     
-    const room = await getRoomById(roomId);
+    const room = getRoomById(roomId);
     
     if (!room) {
       return NextResponse.json(

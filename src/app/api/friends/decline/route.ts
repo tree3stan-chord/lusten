@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
-import { sendFriendRequest } from '../../../../lib/sqlite-db';
+import { declineFriendRequest } from '../../../../lib/sqlite-db';
 import { authOptions } from '../../../../lib/auth';
 import type { Session } from 'next-auth';
 
@@ -15,27 +15,27 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    const { toUserId } = await request.json();
+    const { friendshipId } = await request.json();
     
-    if (!toUserId) {
+    if (!friendshipId) {
       return NextResponse.json(
-        { error: 'Missing toUserId' },
+        { error: 'Missing friendshipId' },
         { status: 400 }
       );
     }
     
-    const friendship = sendFriendRequest(session.user.id, toUserId);
+    const success = declineFriendRequest(friendshipId);
     
-    if (!friendship) {
+    if (!success) {
       return NextResponse.json(
-        { error: 'Friend request already exists or invalid users' },
-        { status: 400 }
+        { error: 'Friend request not found or already processed' },
+        { status: 404 }
       );
     }
     
-    return NextResponse.json({ success: true, friendship });
+    return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('Error sending friend request:', error);
+    console.error('Error declining friend request:', error);
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }

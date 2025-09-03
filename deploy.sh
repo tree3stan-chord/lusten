@@ -24,6 +24,7 @@ sudo rsync -az --delete \
   --include '/package.json' \
   --include '/package-lock.json' \
   --include '/next.config.ts' \
+  --include '/server.js' \
   --include '/.env.local' \
   --exclude '/.git/***' \
   --exclude '/.*' \
@@ -37,6 +38,12 @@ sudo find "$WEB_ROOT" -type d -exec chmod 0755 {} +
 sudo find "$WEB_ROOT" -type f -exec chmod 0644 {} +
 # Make next binary executable
 sudo chmod +x "$WEB_ROOT/node_modules/.bin/next"
+
+# Create data directory for SQLite database
+echo "▶ Create data directory for SQLite"
+sudo mkdir -p "$WEB_ROOT/data"
+sudo chown -R root:root "$WEB_ROOT/data"
+sudo chmod 755 "$WEB_ROOT/data"
 
 # ── start application ───────────────────────────────────────────────────
 echo "▶ Start Next.js application"

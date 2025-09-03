@@ -13,6 +13,9 @@ const handler = app.getRequestHandler()
 // Room state management
 const rooms = new Map()
 
+// User status management
+const userSockets = new Map() // userId -> socketId mapping
+
 // Logging function to capture server events
 const logToEndpoint = async (event, data, level = 'info') => {
   try {
@@ -49,6 +52,58 @@ app.prepare().then(() => {
 
   io.on('connection', (socket) => {
     console.log('User connected:', socket.id)
+
+    // Handle user authentication for status tracking
+    socket.on('user-authenticate', async ({ userId }) => {
+      if (userId) {
+        userSockets.set(userId, socket.id)
+        socket.userId = userId
+        console.log(`User ${userId} authenticated with socket ${socket.id}`)
+        
+        // Mark user as online in database
+        try {
+          await fetch(`${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/api/user/heartbeat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+              user_id: userId,
+              current_room_id: null,
+              spotify_data: null 
+            })
+          })
+        } catch (error) {
+          console.error('Failed to mark user as online:', error)
+        }
+      }
+    })
+
+    // Handle user status updates (visibility changes, etc.)
+    socket.on('user-status-update', ({ userId, status }) => {
+      console.log(`Status update from ${userId}:`, status)
+      // Broadcast to all connected sockets (could be optimized to friends only)
+      socket.broadcast.emit('user-status-changed', { userId, status })
+    })
+
+    // Handle room join/leave for status tracking
+    socket.on('user-room-update', async ({ userId, roomId, action }) => {
+      console.log(`Room ${action} for user ${userId}: ${roomId}`)
+      
+      // Update user status in database
+      try {
+        await fetch(`${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/api/user/heartbeat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            current_room_id: action === 'join' ? roomId : null
+          })
+        })
+        
+        // Broadcast room status change
+        socket.broadcast.emit('user-room-changed', { userId, roomId, action })
+      } catch (error) {
+        console.error('Failed to update room status:', error)
+      }
+    })
 
     socket.on('get-public-rooms', () => {
       const discoverableRooms = []
@@ -286,8 +341,33 @@ app.prepare().then(() => {
       }
     })
 
-    socket.on('disconnect', () => {
+    socket.on('disconnect', async () => {
       console.log('User disconnected:', socket.id)
+      
+      // Handle user going offline
+      if (socket.userId) {
+        const userId = socket.userId
+        userSockets.delete(userId)
+        
+        // Mark user as offline in database
+        try {
+          await fetch(`${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/api/user/heartbeat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+              user_id: userId,
+              is_online: false
+            })
+          })
+          
+          // Broadcast user went offline
+          socket.broadcast.emit('user-offline', { userId })
+        } catch (error) {
+          console.error('Failed to mark user as offline:', error)
+        }
+        
+        console.log(`User ${userId} went offline`)
+      }
     })
   })
 

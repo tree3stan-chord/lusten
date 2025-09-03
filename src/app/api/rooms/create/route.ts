@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createRoom, createOrUpdateProfileRoom } from '../../../../lib/database';
+import { createRoom, createOrUpdateProfileRoom } from '../../../../lib/sqlite-db';
 
 export async function POST(request: NextRequest) {
   try {
@@ -9,10 +9,10 @@ export async function POST(request: NextRequest) {
     
     if (roomType === 'profile') {
       // Handle profile room creation/update
-      room = await createOrUpdateProfileRoom(ownerId, roomName);
+      room = createOrUpdateProfileRoom(ownerId, roomName);
     } else {
       // Handle regular room creation
-      room = await createRoom({
+      room = createRoom({
         id: roomId,
         name: roomName,
         type: roomType,

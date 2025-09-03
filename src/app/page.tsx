@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import { useSession, signIn, signOut } from 'next-auth/react';
 import { io, Socket } from 'socket.io-client';
 import CreateRoomModal from './components/CreateRoomModal';
+import StatusSelector from './components/StatusSelector';
+import { useHeartbeat } from '../hooks/useHeartbeat';
 
 interface Room {
   id: string;
@@ -23,6 +25,11 @@ export default function Home() {
 
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const router = useRouter();
+
+  // Keep user online and track activity
+  useHeartbeat({
+    onError: (error) => console.error('Heartbeat error:', error)
+  });
 
   useEffect(() => {
     // Initialize socket connection
@@ -124,18 +131,56 @@ export default function Home() {
                 <div className="text-gray-600 dark:text-gray-300">Loading...</div>
               ) : session ? (
                 <div className="flex items-center space-x-3">
-                  <span className="text-sm text-gray-700 dark:text-gray-200">
-                    Hi, {session.user?.name || session.user?.email}!
-                  </span>
                   <span className="bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-100 text-xs px-2 py-1 rounded-full">
                     Spotify Connected
                   </span>
-                  <button 
-                    onClick={() => signOut()}
-                    className="text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white px-3 py-2 text-sm font-medium"
-                  >
-                    Sign Out
-                  </button>
+                  
+                  {/* User Dropdown */}
+                  <div className="relative group">
+                    <div className="text-sm text-gray-700 dark:text-gray-200 cursor-pointer px-3 py-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+                      Hi, {session.user?.name || session.user?.email}!
+                      <svg className="inline w-4 h-4 ml-1 transition-transform group-hover:rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </div>
+                    
+                    {/* Dropdown Menu */}
+                    <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 py-1 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-10">
+                      <a
+                        href={`/profile/${(session.user as { id?: string })?.id}`}
+                        className="block px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                      >
+                        <svg className="inline w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                        </svg>
+                        My Profile
+                      </a>
+                      <a
+                        href="/social"
+                        className="block px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                      >
+                        <svg className="inline w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z" />
+                        </svg>
+                        Friends
+                      </a>
+                      <hr className="my-1 border-gray-200 dark:border-gray-600" />
+                      <div className="px-4 py-2">
+                        <div className="text-xs text-gray-500 dark:text-gray-400 mb-2">Status</div>
+                        <StatusSelector showLabel={true} className="w-full" />
+                      </div>
+                      <hr className="my-1 border-gray-200 dark:border-gray-600" />
+                      <button
+                        onClick={() => signOut()}
+                        className="block w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                      >
+                        <svg className="inline w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                        </svg>
+                        Sign Out
+                      </button>
+                    </div>
+                  </div>
                 </div>
               ) : (
                 <div className="flex space-x-4">

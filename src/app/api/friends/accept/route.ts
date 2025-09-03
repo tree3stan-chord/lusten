@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { acceptFriendRequest } from '../../../../lib/database';
+import { getServerSession } from 'next-auth/next';
+import { acceptFriendRequest } from '../../../../lib/sqlite-db';
+import { authOptions } from '../../../../lib/auth';
+import type { Session } from 'next-auth';
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await getServerSession();
+    const session = await getServerSession(authOptions) as Session | null;
     
     if (!session?.user?.id) {
       return NextResponse.json(
@@ -22,7 +24,7 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    const friendship = await acceptFriendRequest(friendshipId);
+    const friendship = acceptFriendRequest(friendshipId);
     
     if (!friendship) {
       return NextResponse.json(

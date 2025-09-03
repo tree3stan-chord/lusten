@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getUserById } from '../../../../lib/database';
+import { getUserById } from '../../../../lib/sqlite-db';
 
 interface RouteParams {
   params: Promise<{ spotifyId: string }>;
@@ -9,7 +9,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
     const { spotifyId } = await params;
     
-    const user = await getUserById(spotifyId);
+    const user = getUserById(spotifyId);
     
     if (!user) {
       return NextResponse.json(
