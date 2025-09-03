@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { getDefaultAvatarUrl } from '../lib/image-utils';
+import { getDefaultAvatarUrl } from '../../lib/image-utils';
 
 interface AvatarProps {
   src?: string | null;

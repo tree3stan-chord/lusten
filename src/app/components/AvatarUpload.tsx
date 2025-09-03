@@ -11,7 +11,7 @@ import {
   type ImageCropData,
   type ProcessedImage,
   AVATAR_CONFIG
-} from '../lib/image-utils';
+} from '../../lib/image-utils';
 
 interface AvatarUploadProps {
   isOpen: boolean;
