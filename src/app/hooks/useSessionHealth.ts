@@ -1,7 +1,6 @@
 'use client';
 
 import { useSession, getSession } from 'next-auth/react';
-import { Session } from 'next-auth';
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { spotifyApi } from '../../lib/spotify-api-client';
 
