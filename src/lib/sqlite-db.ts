@@ -12,6 +12,57 @@ function ensureDataDir() {
   }
 }
 
+// Database migrations for schema updates
+function runMigrations() {
+  const db = new Database(DB_PATH)
+  
+  try {
+    console.log('🔄 Checking for database migrations...')
+    
+    // Get current table structure
+    const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{ name: string }>
+    
+    // Only run migrations if users table exists (existing database)
+    if (tables.some(table => table.name === 'users')) {
+      console.log('📊 Existing database detected, checking for schema updates...')
+      
+      // Check users table columns
+      const columns = db.prepare("PRAGMA table_info(users)").all() as Array<{ name: string }>
+      const columnNames = columns.map(col => col.name)
+      
+      let migrationsRun = 0
+      
+      // Migration 1: Add custom avatar columns
+      if (!columnNames.includes('custom_avatar_url')) {
+        console.log('  ➕ Adding custom_avatar_url column...')
+        db.prepare('ALTER TABLE users ADD COLUMN custom_avatar_url TEXT').run()
+        migrationsRun++
+      }
+      
+      if (!columnNames.includes('avatar_updated_at')) {
+        console.log('  ➕ Adding avatar_updated_at column...')
+        db.prepare('ALTER TABLE users ADD COLUMN avatar_updated_at TEXT').run()
+        migrationsRun++
+      }
+      
+      // Future migrations go here...
+      
+      if (migrationsRun > 0) {
+        console.log(`✅ Applied ${migrationsRun} database migrations successfully`)
+      } else {
+        console.log('✅ Database schema is up to date')
+      }
+    } else {
+      console.log('🆕 New database detected, will create fresh schema')
+    }
+  } catch (error) {
+    console.error('❌ Migration error:', error)
+    // Don't throw - let app continue with existing schema
+  } finally {
+    db.close()
+  }
+}
+
 // Initialize database with schema
 function initializeDatabase() {
   ensureDataDir()
@@ -19,6 +70,9 @@ function initializeDatabase() {
   
   // Enable foreign key constraints
   db.exec('PRAGMA foreign_keys = ON')
+  
+  // Run migrations before schema creation (for existing databases)
+  runMigrations()
   
   // Create tables
   db.exec(`
