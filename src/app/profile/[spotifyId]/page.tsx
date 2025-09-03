@@ -7,6 +7,8 @@ import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import ProfileAvatar from '../../components/ProfileAvatar';
 import Avatar from '../../components/Avatar';
+import SocialStatsCard from '../../components/SocialStatsCard';
+import { getUserTopPicks, getUserSpotifyStats } from '../../../lib/sqlite-db';
 
 interface User {
   spotify_id: string;
@@ -38,6 +40,8 @@ export default function ProfilePage({ params }: ProfilePageProps) {
   const [friendRequestSent, setFriendRequestSent] = useState(false);
   const [friends, setFriends] = useState<User[]>([]);
   const [friendsLoading, setFriendsLoading] = useState(true);
+  const [topPicks, setTopPicks] = useState<any[]>([]);
+  const [spotifyStats, setSpotifyStats] = useState<any>(null);
 
   const fetchUserProfile = useCallback(async (userId: string) => {
     try {
@@ -110,6 +114,16 @@ export default function ProfilePage({ params }: ProfilePageProps) {
     }
   };
 
+  const fetchSocialStats = useCallback(async (userId: string) => {
+    try {
+      // For now, we'll set empty arrays - in Phase 2 we'll add API endpoints
+      setTopPicks([]);
+      setSpotifyStats(null);
+    } catch (error) {
+      console.error('Error fetching social stats:', error);
+    }
+  }, []);
+
   const fetchFriends = useCallback(async (userId: string) => {
     try {
       // Only fetch friends if this is the current user's profile
@@ -131,8 +145,9 @@ export default function ProfilePage({ params }: ProfilePageProps) {
   useEffect(() => {
     if (user && session) {
       fetchFriends(user.spotify_id);
+      fetchSocialStats(user.spotify_id);
     }
-  }, [user, session, fetchFriends]);
+  }, [user, session, fetchFriends, fetchSocialStats]);
 
   const isOwnProfile = (session?.user as { id: string } | undefined)?.id === spotifyId;
 
@@ -179,63 +194,55 @@ export default function ProfilePage({ params }: ProfilePageProps) {
 
       {/* Profile Content */}
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        {/* Profile Header */}
-        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-8 mb-8">
-          <div className="flex items-start space-x-6">
-            {/* Avatar */}
-            {isOwnProfile ? (
-              <ProfileAvatar size="2xl" />
-            ) : (
-              <Avatar
-                src={user.avatar_url}
-                alt={user.name}
-                size="2xl"
-                userId={user.spotify_id}
-                name={user.name}
-              />
-            )}
-
-            {/* Profile Info */}
-            <div className="flex-1">
-              <div className="flex items-start justify-between">
-                <div>
-                  <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">
-                    {user.name}
-                  </h1>
-                  <p className="text-gray-600 dark:text-gray-400 mb-4">
-                    Listening since {new Date(user.created_at).toLocaleDateString('en-US', { 
-                      month: 'long', 
-                      year: 'numeric' 
-                    })}
-                  </p>
-                </div>
-
-                {/* Friend Actions */}
-                {!isOwnProfile && (
-                  <div className="flex items-center space-x-3">
-                    <button 
-                      onClick={handleSendFriendRequest}
-                      disabled={friendRequestSent}
-                      className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-colors ${
-                        friendRequestSent 
-                          ? 'bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed' 
-                          : 'bg-indigo-600 hover:bg-indigo-700 text-white'
-                      }`}
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        {friendRequestSent ? (
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                        ) : (
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                        )}
-                      </svg>
-                      <span>{friendRequestSent ? 'Request Sent' : 'Add Friend'}</span>
-                    </button>
-                  </div>
-                )}
-              </div>
+        {/* Profile Header with Basic Info */}
+        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-6 mb-8">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">
+                {user.name}
+              </h1>
+              <p className="text-gray-600 dark:text-gray-400">
+                Listening since {new Date(user.created_at).toLocaleDateString('en-US', { 
+                  month: 'long', 
+                  year: 'numeric' 
+                })}
+              </p>
             </div>
+
+            {/* Friend Actions */}
+            {!isOwnProfile && (
+              <div className="flex items-center space-x-3">
+                <button 
+                  onClick={handleSendFriendRequest}
+                  disabled={friendRequestSent}
+                  className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-colors ${
+                    friendRequestSent 
+                      ? 'bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed' 
+                      : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                  }`}
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    {friendRequestSent ? (
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    ) : (
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                    )}
+                  </svg>
+                  <span>{friendRequestSent ? 'Request Sent' : 'Add Friend'}</span>
+                </button>
+              </div>
+            )}
           </div>
+        </div>
+
+        {/* Social Stats Card */}
+        <div className="mb-8">
+          <SocialStatsCard
+            user={user}
+            isOwnProfile={isOwnProfile}
+            topPicks={topPicks}
+            spotifyStats={spotifyStats}
+          />
         </div>
 
         {/* Split Layout: Profile Room & Friends */}

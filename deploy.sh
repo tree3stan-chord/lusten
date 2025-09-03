@@ -25,8 +25,8 @@ if [ -f "$WEB_ROOT/package-lock.json" ] && cmp -s "$PROJECT_DIR/package-lock.jso
 fi
 
 if [ "$SKIP_NODE_MODULES" = true ]; then
-  # Fast sync without node_modules
-  sudo rsync -az --delete \
+  # Fast sync without node_modules (don't modify source files)
+  sudo rsync -az --delete --no-times --omit-dir-times \
     --include '/.next/***' \
     --include '/public/***' \
     --include '/src/***' \
@@ -42,9 +42,9 @@ if [ "$SKIP_NODE_MODULES" = true ]; then
     --exclude '/deploy.sh' \
     "$PROJECT_DIR"/ "$WEB_ROOT"/
 else
-  # Full sync including node_modules  
+  # Full sync including node_modules (don't modify source files)
   echo "  Dependencies changed - syncing all files including node_modules"
-  sudo rsync -az --delete \
+  sudo rsync -az --delete --no-times --omit-dir-times \
     --include '/.next/***' \
     --include '/node_modules/***' \
     --include '/public/***' \
@@ -69,9 +69,9 @@ sudo find "$WEB_ROOT" -type f -exec chmod 0644 {} +
 # Make next binary executable
 sudo chmod +x "$WEB_ROOT/node_modules/.bin/next"
 
-# Fix ownership of development .next directory to prevent future permission issues
+# Fix ownership of entire development directory to prevent future permission issues  
 echo "▶ Fix development directory ownership"
-sudo chown -R $USER:$USER "$PROJECT_DIR/.next" 2>/dev/null || true
+sudo chown -R $USER:$USER "$PROJECT_DIR" 2>/dev/null || true
 
 # Create data directory for SQLite database
 echo "▶ Create data directory for SQLite"

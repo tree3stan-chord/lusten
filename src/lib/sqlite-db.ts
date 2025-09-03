@@ -155,6 +155,32 @@ function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_user_status_visibility ON user_status(visibility);
     CREATE INDEX IF NOT EXISTS idx_user_status_room ON user_status(current_room_id);
     CREATE INDEX IF NOT EXISTS idx_user_status_updated ON user_status(updated_at);
+
+    -- User's custom Top 5 picks (songs, albums, artists)
+    CREATE TABLE IF NOT EXISTS user_top_picks (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(spotify_id) ON DELETE CASCADE,
+      position INTEGER NOT NULL CHECK (position BETWEEN 1 AND 5),
+      type TEXT NOT NULL CHECK (type IN ('song', 'album', 'artist')),
+      spotify_id TEXT NOT NULL,
+      spotify_data TEXT NOT NULL, -- JSON string with name, images, artist info, etc.
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(user_id, position)
+    );
+
+    -- Cached Spotify stats for automated Top 3s display
+    CREATE TABLE IF NOT EXISTS user_spotify_stats (
+      user_id TEXT PRIMARY KEY REFERENCES users(spotify_id) ON DELETE CASCADE,
+      top_artists TEXT, -- JSON array of top 3 artists with images, genres
+      top_albums TEXT,  -- JSON array of top 3 albums with images, artists  
+      top_genres TEXT,  -- JSON array of top 3 genres with counts
+      last_updated TEXT DEFAULT (datetime('now'))
+    );
+
+    -- Additional indexes for social features
+    CREATE INDEX IF NOT EXISTS idx_user_top_picks_user ON user_top_picks(user_id);
+    CREATE INDEX IF NOT EXISTS idx_user_top_picks_position ON user_top_picks(user_id, position);
   `)
 
   return db
@@ -222,6 +248,60 @@ export interface RoomBan {
   reason: string | null
   expires_at: string | null
   created_at: string
+}
+
+// Social features interfaces
+export interface UserTopPick {
+  id: string
+  user_id: string
+  position: number
+  type: 'song' | 'album' | 'artist'
+  spotify_id: string
+  spotify_data: string // JSON string
+  created_at: string
+  updated_at: string
+}
+
+export interface ParsedTopPick extends Omit<UserTopPick, 'spotify_data'> {
+  spotify_data: {
+    name: string
+    artist?: string // For songs and albums
+    artists?: string[] // For albums with multiple artists
+    images: Array<{ url: string; width: number; height: number }>
+    external_urls?: { spotify: string }
+    release_date?: string // For albums
+    duration_ms?: number // For songs
+    genres?: string[] // For artists
+  }
+}
+
+export interface UserSpotifyStats {
+  user_id: string
+  top_artists: string // JSON string
+  top_albums: string // JSON string  
+  top_genres: string // JSON string
+  last_updated: string
+}
+
+export interface ParsedSpotifyStats extends Omit<UserSpotifyStats, 'top_artists' | 'top_albums' | 'top_genres'> {
+  top_artists: Array<{
+    id: string
+    name: string
+    images: Array<{ url: string; width: number; height: number }>
+    genres: string[]
+    popularity: number
+  }>
+  top_albums: Array<{
+    id: string
+    name: string
+    artist: string
+    images: Array<{ url: string; width: number; height: number }>
+    release_date: string
+  }>
+  top_genres: Array<{
+    name: string
+    count: number
+  }>
 }
 
 // User operations
@@ -948,6 +1028,144 @@ export function transferRoomOwnership(roomId: string, newOwnerId: string): boole
   
   const result = db.prepare('UPDATE rooms SET owner_id = ? WHERE id = ?')
     .run(newOwnerId, roomId)
+  
+  db.close()
+  return result.changes > 0
+}
+
+// ── Social Features: Top 5 Management ────────────────────────────────────
+
+export function getUserTopPicks(userId: string): ParsedTopPick[] {
+  const db = getDb()
+  
+  const picks = db.prepare(`
+    SELECT * FROM user_top_picks 
+    WHERE user_id = ? 
+    ORDER BY position ASC
+  `).all(userId) as UserTopPick[]
+  
+  db.close()
+  
+  return picks.map(pick => ({
+    ...pick,
+    spotify_data: JSON.parse(pick.spotify_data)
+  }))
+}
+
+export function setUserTopPick(
+  userId: string,
+  position: number,
+  type: 'song' | 'album' | 'artist',
+  spotifyId: string,
+  spotifyData: ParsedTopPick['spotify_data']
+): ParsedTopPick {
+  const db = getDb()
+  const id = Math.random().toString(36).substring(2, 15)
+  
+  // Use INSERT OR REPLACE to handle position conflicts
+  const stmt = db.prepare(`
+    INSERT OR REPLACE INTO user_top_picks 
+    (id, user_id, position, type, spotify_id, spotify_data, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+  `)
+  
+  stmt.run(id, userId, position, type, spotifyId, JSON.stringify(spotifyData))
+  
+  const result = db.prepare('SELECT * FROM user_top_picks WHERE id = ?')
+    .get(id) as UserTopPick
+  
+  db.close()
+  
+  return {
+    ...result,
+    spotify_data: JSON.parse(result.spotify_data)
+  }
+}
+
+export function deleteUserTopPick(userId: string, position: number): boolean {
+  const db = getDb()
+  
+  const result = db.prepare(`
+    DELETE FROM user_top_picks 
+    WHERE user_id = ? AND position = ?
+  `).run(userId, position)
+  
+  db.close()
+  return result.changes > 0
+}
+
+export function reorderUserTopPicks(userId: string, newOrder: Array<{ id: string; position: number }>): boolean {
+  const db = getDb()
+  
+  try {
+    db.exec('BEGIN TRANSACTION')
+    
+    const stmt = db.prepare(`
+      UPDATE user_top_picks 
+      SET position = ?, updated_at = datetime('now')
+      WHERE id = ? AND user_id = ?
+    `)
+    
+    for (const item of newOrder) {
+      stmt.run(item.position, item.id, userId)
+    }
+    
+    db.exec('COMMIT')
+    db.close()
+    return true
+  } catch (error) {
+    db.exec('ROLLBACK')
+    db.close()
+    console.error('Error reordering top picks:', error)
+    return false
+  }
+}
+
+// ── Social Features: Spotify Stats Management ───────────────────────────
+
+export function getUserSpotifyStats(userId: string): ParsedSpotifyStats | null {
+  const db = getDb()
+  
+  const stats = db.prepare(`
+    SELECT * FROM user_spotify_stats 
+    WHERE user_id = ?
+  `).get(userId) as UserSpotifyStats | undefined
+  
+  db.close()
+  
+  if (!stats) return null
+  
+  return {
+    user_id: stats.user_id,
+    last_updated: stats.last_updated,
+    top_artists: stats.top_artists ? JSON.parse(stats.top_artists) : [],
+    top_albums: stats.top_albums ? JSON.parse(stats.top_albums) : [],
+    top_genres: stats.top_genres ? JSON.parse(stats.top_genres) : []
+  }
+}
+
+export function updateUserSpotifyStats(
+  userId: string,
+  stats: {
+    top_artists: ParsedSpotifyStats['top_artists']
+    top_albums: ParsedSpotifyStats['top_albums']
+    top_genres: ParsedSpotifyStats['top_genres']
+  }
+): boolean {
+  const db = getDb()
+  
+  const stmt = db.prepare(`
+    INSERT OR REPLACE INTO user_spotify_stats 
+    (user_id, top_artists, top_albums, top_genres, last_updated)
+    VALUES (?, ?, ?, ?, datetime('now'))
+  `)
+  
+  const result = stmt.run(
+    userId,
+    JSON.stringify(stats.top_artists),
+    JSON.stringify(stats.top_albums),
+    JSON.stringify(stats.top_genres)
+  )
   
   db.close()
   return result.changes > 0
