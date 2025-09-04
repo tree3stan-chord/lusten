@@ -4,6 +4,8 @@ import { useState } from 'react';
 import { useSession } from 'next-auth/react';
 import ProfileAvatar from './ProfileAvatar';
 import Avatar from './Avatar';
+import EnhancedTopThreesSection from './EnhancedTopThreesSection';
+import { useSpotifyStats } from '../hooks/useSpotifyStats';
 import type { User } from '../../lib/sqlite-db';
 import type { ParsedTopPick, ParsedSpotifyStats } from '../../lib/sqlite-db';
 
@@ -21,6 +23,19 @@ export default function SocialStatsCard({
   spotifyStats
 }: SocialStatsCardProps) {
   const { data: session } = useSession();
+  
+  // Use the enhanced Spotify stats hook for better state management
+  const { 
+    stats: liveStats, 
+    updateStats 
+  } = useSpotifyStats({
+    userId: user.spotify_id,
+    initialStats: spotifyStats,
+    autoRefresh: isOwnProfile // Only auto-refresh for user's own profile
+  });
+
+  // Use live stats if available, fall back to initial props
+  const currentStats = liveStats || spotifyStats;
 
   return (
     <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-6">
@@ -57,9 +72,12 @@ export default function SocialStatsCard({
 
         {/* Right Section - Top 3s (Auto Stats) */}
         <div className="flex-1 min-w-0">
-          <TopThreesSection
-            spotifyStats={spotifyStats}
+          <EnhancedTopThreesSection
+            spotifyStats={currentStats}
             userName={user.name}
+            userId={user.spotify_id}
+            isOwnProfile={isOwnProfile}
+            onStatsUpdated={updateStats}
           />
         </div>
       </div>
