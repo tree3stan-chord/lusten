@@ -103,24 +103,24 @@ fi
 
 # Also kill any process using port 3000
 echo "DEBUG: Checking for processes on port 3000"
-PORT_3000_OUTPUT=$(ss -tulpn | grep :3000 || echo "")
-echo "DEBUG: Port 3000 output: '$PORT_3000_OUTPUT'"
-if [ -n "$PORT_3000_OUTPUT" ]; then
-    EXISTING_PID=$(echo "$PORT_3000_OUTPUT" | sed -n 's/.*pid=\([0-9]*\).*/\1/p' | head -1)
-    if [ -n "$EXISTING_PID" ]; then
-        echo "  Killing process $EXISTING_PID using port 3000"
-        kill "$EXISTING_PID" 2>/dev/null || true
-        sleep 2
-    else
-        echo "DEBUG: Could not extract PID from port output"
-    fi
+EXISTING_PID=$(lsof -ti:3000 2>/dev/null || echo "")
+echo "DEBUG: Process on port 3000: '$EXISTING_PID'"
+if [ -n "$EXISTING_PID" ]; then
+    echo "  Killing process $EXISTING_PID using port 3000"
+    kill "$EXISTING_PID" 2>/dev/null || true
+    sleep 2
 else
     echo "DEBUG: No process found on port 3000"
 fi
 
+# Clean up any existing log file and ensure proper ownership
+sudo rm -f /tmp/lusten.log
+sudo touch /tmp/lusten.log
+sudo chown $USER:$USER /tmp/lusten.log
+
 # Start new process 
 echo "DEBUG: About to start Next.js in production mode..."
-echo "DEBUG: Setting NODE_ENV=production and running npm start"
+echo "DEBUG: Using standalone server as recommended"
 export NODE_ENV=production
 nohup npm start > /tmp/lusten.log 2>&1 &
 START_PID=$!
