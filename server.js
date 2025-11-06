@@ -2,6 +2,7 @@ const { createServer } = require('http')
 const { parse } = require('url')
 const next = require('next')
 const { Server } = require('socket.io')
+const SecurityManager = require('./src/lib/security-manager')
 
 const dev = process.env.NODE_ENV !== 'production'
 const hostname = '127.0.0.1'
@@ -15,6 +16,9 @@ const rooms = new Map()
 
 // User status management
 const userSockets = new Map() // userId -> socketId mapping
+
+// Security manager
+const securityManager = new SecurityManager()
 
 // Logging function to capture server events
 const logToEndpoint = async (event, data, level = 'info') => {
@@ -51,7 +55,20 @@ app.prepare().then(() => {
   })
 
   io.on('connection', (socket) => {
-    console.log('User connected:', socket.id)
+    const clientIP = socket.handshake.address || socket.conn.remoteAddress;
+    console.log('User connected:', socket.id, 'from IP:', clientIP)
+
+    // Security: Check connection limits
+    const connectionCheck = securityManager.canConnect(clientIP, socket.id);
+    if (!connectionCheck.allowed) {
+      console.warn(`🚫 Connection blocked from ${clientIP}: ${connectionCheck.reason}`);
+      socket.emit('error', connectionCheck.reason);
+      socket.disconnect(true);
+      return;
+    }
+
+    // Store client IP for cleanup
+    socket.clientIP = clientIP;
 
     // Handle user authentication for status tracking
     socket.on('user-authenticate', async ({ userId }) => {
@@ -124,6 +141,34 @@ app.prepare().then(() => {
     })
 
     socket.on('create-room', async ({ roomId, roomName, userId, roomType, genres }) => {
+      // Security: Validate input
+      const validation = securityManager.validateInput(
+        { roomName, userId, roomId },
+        { roomName: true, userId: true, roomId: true }
+      );
+
+      if (!validation.valid) {
+        console.warn(`🚫 Invalid room creation attempt from ${userId}:`, validation.errors);
+        socket.emit('error', `Invalid input: ${validation.errors.join(', ')}`);
+        return;
+      }
+
+      // Security: Check rate limits
+      const rateCheck = securityManager.canCreateRoom(userId);
+      if (!rateCheck.allowed) {
+        console.warn(`🚫 Room creation blocked for ${userId}: ${rateCheck.reason}`);
+        socket.emit('error', rateCheck.reason);
+        return;
+      }
+
+      // Security: Check event rate limit
+      const eventCheck = securityManager.canEmitEvent(socket.id, 'create-room', userId);
+      if (!eventCheck.allowed) {
+        console.warn(`🚫 Event rate limit exceeded for ${userId}: ${eventCheck.reason}`);
+        socket.emit('error', eventCheck.reason);
+        return;
+      }
+
       console.log(`User ${userId} creating room ${roomId} (${roomType}): ${roomName}`, { genres })
       logToEndpoint('room-create', { roomId, roomName, userId, roomType, genres })
 
@@ -160,6 +205,9 @@ app.prepare().then(() => {
           genres: genres || []
         })
 
+        // Security: Track active room
+        securityManager.addActiveRoom(userId, roomId);
+
         socket.emit('room-created', { roomId, roomName })
 
         // Notify all clients about new discoverable rooms (public or profile)
@@ -178,9 +226,29 @@ app.prepare().then(() => {
     })
 
     socket.on('join-room', ({ roomId, userId, isHost }) => {
+      // Security: Validate input
+      const validation = securityManager.validateInput(
+        { roomId, userId },
+        { roomId: true, userId: true }
+      );
+
+      if (!validation.valid) {
+        console.warn(`🚫 Invalid join-room attempt from ${userId}:`, validation.errors);
+        socket.emit('error', `Invalid input: ${validation.errors.join(', ')}`);
+        return;
+      }
+
+      // Security: Check event rate limit
+      const eventCheck = securityManager.canEmitEvent(socket.id, 'join-room', userId);
+      if (!eventCheck.allowed) {
+        console.warn(`🚫 Event rate limit exceeded for ${userId}: ${eventCheck.reason}`);
+        socket.emit('error', eventCheck.reason);
+        return;
+      }
+
       console.log(`User ${userId} joining room ${roomId} as ${isHost ? 'host' : 'listener'}`)
       logToEndpoint('user-join', { roomId, userId, isHost, socketId: socket.id })
-      
+
       socket.join(roomId)
       console.log(`Socket ${socket.id} joined room ${roomId}`)
 
@@ -197,12 +265,23 @@ app.prepare().then(() => {
             isPublic: false,
             createdAt: Date.now()
           })
+          // Security: Track active room for host
+          securityManager.addActiveRoom(userId, roomId);
         } else {
           socket.emit('error', 'Room does not exist')
           return
         }
       } else {
         const room = rooms.get(roomId)
+
+        // Security: Check if room is full
+        const capacityCheck = securityManager.canJoinRoom(room.users.size);
+        if (!capacityCheck.allowed) {
+          console.warn(`🚫 Room join blocked for ${userId}: ${capacityCheck.reason}`);
+          socket.emit('error', capacityCheck.reason);
+          return;
+        }
+
         room.users.add(userId)
       }
 
@@ -240,17 +319,19 @@ app.prepare().then(() => {
 
     socket.on('leave-room', ({ roomId, userId }) => {
       console.log(`User ${userId} leaving room ${roomId}`)
-      
+
       socket.leave(roomId)
-      
+
       const room = rooms.get(roomId)
       if (room) {
         room.users.delete(userId)
-        
+
         if (userId === room.hostId) {
           // Only delete room if it's not a persistent profile room
           if (room.type !== 'profile') {
             rooms.delete(roomId)
+            // Security: Remove from active room tracking
+            securityManager.removeActiveRoom(userId, roomId);
             io.to(roomId).emit('room-closed', 'Host left the room')
           } else {
             // Profile room stays alive, just reset playback state
@@ -266,6 +347,14 @@ app.prepare().then(() => {
     })
 
     socket.on('track-change', async ({ roomId, track, userId, hostAccessToken }) => {
+      // Security: Check event rate limit (allows rapid skipping but prevents abuse)
+      const eventCheck = securityManager.canEmitEvent(socket.id, 'track-change', userId);
+      if (!eventCheck.allowed) {
+        console.warn(`🚫 Track change rate limit exceeded for ${userId}: ${eventCheck.reason}`);
+        socket.emit('error', 'Too many track changes. Please slow down.');
+        return;
+      }
+
       console.log(`Track change from ${userId} in room ${roomId}:`, track.name)
       const room = rooms.get(roomId)
 
@@ -368,16 +457,23 @@ app.prepare().then(() => {
     })
 
     socket.on('playback-state', ({ roomId, isPlaying, position, userId }) => {
+      // Security: Check event rate limit
+      const eventCheck = securityManager.canEmitEvent(socket.id, 'playback-state', userId);
+      if (!eventCheck.allowed) {
+        console.warn(`🚫 Playback state rate limit exceeded for ${userId}`);
+        return;
+      }
+
       const room = rooms.get(roomId)
       if (room && userId === room.hostId) {
         const timestamp = Date.now()
         room.isPlaying = isPlaying
         room.position = position
         room.lastUpdate = timestamp
-        
-        socket.to(roomId).emit('playback-updated', { 
-          isPlaying, 
-          position, 
+
+        socket.to(roomId).emit('playback-updated', {
+          isPlaying,
+          position,
           timestamp,
           serverTime: timestamp
         })
@@ -385,12 +481,19 @@ app.prepare().then(() => {
     })
 
     socket.on('seek-position', ({ roomId, position, userId }) => {
+      // Security: Check event rate limit
+      const eventCheck = securityManager.canEmitEvent(socket.id, 'seek-position', userId);
+      if (!eventCheck.allowed) {
+        console.warn(`🚫 Seek position rate limit exceeded for ${userId}`);
+        return;
+      }
+
       const room = rooms.get(roomId)
       if (room && userId === room.hostId) {
         const timestamp = Date.now()
         room.position = position
         room.lastUpdate = timestamp
-        
+
         socket.to(roomId).emit('seek-to-position', {
           position,
           timestamp,
@@ -400,12 +503,35 @@ app.prepare().then(() => {
     })
 
     socket.on('chat-message', ({ roomId, message, userId, userName }) => {
-      console.log(`Chat message from ${userName} (${userId}) in room ${roomId}: ${message}`)
+      // Security: Validate input
+      const validation = securityManager.validateInput(
+        { roomId, message, userId },
+        { roomId: true, message: true, userId: true }
+      );
+
+      if (!validation.valid) {
+        console.warn(`🚫 Invalid chat message from ${userId}:`, validation.errors);
+        socket.emit('error', `Invalid message: ${validation.errors.join(', ')}`);
+        return;
+      }
+
+      // Security: Check chat rate limit
+      const eventCheck = securityManager.canEmitEvent(socket.id, 'chat-message', userId);
+      if (!eventCheck.allowed) {
+        console.warn(`🚫 Chat rate limit exceeded for ${userId}: ${eventCheck.reason}`);
+        socket.emit('error', 'You are sending messages too quickly. Please slow down.');
+        return;
+      }
+
+      // Use sanitized message
+      const sanitizedMessage = validation.sanitized.message;
+
+      console.log(`Chat message from ${userName} (${userId}) in room ${roomId}: ${sanitizedMessage}`)
       const room = rooms.get(roomId)
       if (room) {
         console.log(`Broadcasting chat to ${room.users.size - 1} other users in room ${roomId}`)
         socket.to(roomId).emit('chat-message', {
-          message,
+          message: sanitizedMessage,
           userId,
           userName,
           timestamp: Date.now()
@@ -417,12 +543,20 @@ app.prepare().then(() => {
 
     socket.on('disconnect', async () => {
       console.log('User disconnected:', socket.id)
-      
+
+      // Security: Clean up connection tracking
+      if (socket.clientIP) {
+        securityManager.removeConnection(socket.clientIP, socket.id);
+      }
+
+      // Security: Clean up socket event tracking
+      securityManager.cleanupSocket(socket.id);
+
       // Handle user going offline
       if (socket.userId) {
         const userId = socket.userId
         userSockets.delete(userId)
-        
+
         // Mark user as offline in database
         try {
           await fetch(`${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/api/user/heartbeat`, {
@@ -445,6 +579,49 @@ app.prepare().then(() => {
     })
   })
 
+  // Security: Periodic room cleanup (every 10 minutes)
+  setInterval(() => {
+    console.log('🧹 Running periodic room cleanup...');
+    let cleanedRooms = 0;
+
+    for (const [roomId, room] of rooms.entries()) {
+      if (securityManager.shouldCleanupRoom(room)) {
+        console.log(`Cleaning up inactive room: ${roomId} (users: ${room.users.size}, type: ${room.type})`);
+
+        // Remove from active room tracking
+        if (room.hostId) {
+          securityManager.removeActiveRoom(room.hostId, roomId);
+        }
+
+        // Notify users and remove room
+        io.to(roomId).emit('room-closed', 'Room closed due to inactivity');
+        rooms.delete(roomId);
+        cleanedRooms++;
+      }
+    }
+
+    if (cleanedRooms > 0) {
+      console.log(`🧹 Cleaned up ${cleanedRooms} inactive rooms`);
+    }
+
+    // Log security stats
+    const stats = securityManager.getStats();
+    console.log('📊 Security stats:', stats);
+  }, 10 * 60 * 1000); // Every 10 minutes
+
+  // Security: Cleanup on shutdown
+  process.on('SIGTERM', () => {
+    console.log('SIGTERM received, cleaning up...');
+    securityManager.shutdown();
+    process.exit(0);
+  });
+
+  process.on('SIGINT', () => {
+    console.log('SIGINT received, cleaning up...');
+    securityManager.shutdown();
+    process.exit(0);
+  });
+
   httpServer
     .once('error', (err) => {
       console.error(err)
@@ -452,5 +629,6 @@ app.prepare().then(() => {
     })
     .listen(port, hostname, () => {
       console.log(`> Ready on http://${hostname}:${port}`)
+      console.log('🔒 Security manager initialized')
     })
 })
