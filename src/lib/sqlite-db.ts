@@ -72,8 +72,27 @@ function runMigrations() {
         }
       }
 
+      // Migration 3: Add profile enhancement columns
+      if (!columnNames.includes('bio')) {
+        console.log('  ➕ Adding bio column to users table...')
+        db.prepare('ALTER TABLE users ADD COLUMN bio TEXT').run()
+        migrationsRun++
+      }
+
+      if (!columnNames.includes('custom_status')) {
+        console.log('  ➕ Adding custom_status column to users table...')
+        db.prepare('ALTER TABLE users ADD COLUMN custom_status TEXT').run()
+        migrationsRun++
+      }
+
+      if (!columnNames.includes('privacy_settings')) {
+        console.log('  ➕ Adding privacy_settings column to users table...')
+        db.prepare('ALTER TABLE users ADD COLUMN privacy_settings TEXT').run()
+        migrationsRun++
+      }
+
       // Future migrations go here...
-      
+
       if (migrationsRun > 0) {
         console.log(`✅ Applied ${migrationsRun} database migrations successfully`)
       } else {
@@ -111,6 +130,9 @@ function initializeDatabase() {
       custom_avatar_url TEXT,
       avatar_updated_at TEXT,
       profile_room_id TEXT,
+      bio TEXT,
+      custom_status TEXT,
+      privacy_settings TEXT, -- JSON: { profile_visibility: 'public' | 'friends' | 'private', activity_visibility: 'public' | 'friends' | 'private', show_listening: boolean }
       created_at TEXT DEFAULT (datetime('now'))
     );
 
@@ -284,6 +306,54 @@ function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_user_reports_entity ON user_reports(reported_entity_type, reported_entity_id);
     CREATE INDEX IF NOT EXISTS idx_user_reports_status ON user_reports(status);
     CREATE INDEX IF NOT EXISTS idx_user_reports_created ON user_reports(created_at DESC);
+
+    -- User achievements table (badges, milestones, progress tracking)
+    CREATE TABLE IF NOT EXISTS user_achievements (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(spotify_id) ON DELETE CASCADE,
+      achievement_type TEXT NOT NULL CHECK (achievement_type IN (
+        'first_room', 'room_host_10', 'room_host_50', 'room_host_100',
+        'first_friend', 'friends_5', 'friends_25', 'friends_100',
+        'listening_hours_10', 'listening_hours_100', 'listening_hours_1000',
+        'genre_explorer', 'night_owl', 'early_bird', 'social_butterfly',
+        'profile_complete', 'top_picks_set', 'bio_writer'
+      )),
+      title TEXT NOT NULL,
+      description TEXT NOT NULL,
+      icon TEXT, -- Emoji or icon identifier
+      progress INTEGER DEFAULT 0, -- For tracking towards achievement
+      target INTEGER DEFAULT 1, -- Target value to unlock
+      unlocked BOOLEAN DEFAULT FALSE,
+      unlocked_at TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(user_id, achievement_type)
+    );
+
+    -- Indexes for achievements
+    CREATE INDEX IF NOT EXISTS idx_achievements_user ON user_achievements(user_id);
+    CREATE INDEX IF NOT EXISTS idx_achievements_type ON user_achievements(achievement_type);
+    CREATE INDEX IF NOT EXISTS idx_achievements_unlocked ON user_achievements(unlocked);
+    CREATE INDEX IF NOT EXISTS idx_achievements_user_unlocked ON user_achievements(user_id, unlocked);
+
+    -- Activity feed table (recent user activities for profile)
+    CREATE TABLE IF NOT EXISTS activity_feed (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(spotify_id) ON DELETE CASCADE,
+      activity_type TEXT NOT NULL CHECK (activity_type IN (
+        'created_room', 'joined_room', 'became_friends', 'unlocked_achievement',
+        'updated_top_picks', 'updated_bio', 'updated_avatar', 'listening_milestone'
+      )),
+      activity_data TEXT, -- JSON with activity-specific data
+      visibility TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'friends', 'private')),
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    -- Indexes for activity feed
+    CREATE INDEX IF NOT EXISTS idx_activity_user ON activity_feed(user_id);
+    CREATE INDEX IF NOT EXISTS idx_activity_type ON activity_feed(activity_type);
+    CREATE INDEX IF NOT EXISTS idx_activity_visibility ON activity_feed(visibility);
+    CREATE INDEX IF NOT EXISTS idx_activity_created ON activity_feed(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_activity_user_created ON activity_feed(user_id, created_at DESC);
   `)
 
   return db
@@ -295,12 +365,26 @@ function getDb() {
 }
 
 // Database schema types
+export interface PrivacySettings {
+  profile_visibility: 'public' | 'friends' | 'private'
+  activity_visibility: 'public' | 'friends' | 'private'
+  show_listening: boolean
+}
+
 export interface User {
   spotify_id: string
   name: string
   avatar_url: string | null
+  custom_avatar_url: string | null
   profile_room_id: string | null
+  bio: string | null
+  custom_status: string | null
+  privacy_settings: string | null // JSON string
   created_at: string
+}
+
+export interface ParsedUser extends Omit<User, 'privacy_settings'> {
+  privacy_settings: PrivacySettings | null
 }
 
 export interface Room {
@@ -396,6 +480,53 @@ export interface UserReport {
   admin_notes: string | null
   created_at: string
   updated_at: string
+}
+
+export type AchievementType =
+  | 'first_room' | 'room_host_10' | 'room_host_50' | 'room_host_100'
+  | 'first_friend' | 'friends_5' | 'friends_25' | 'friends_100'
+  | 'listening_hours_10' | 'listening_hours_100' | 'listening_hours_1000'
+  | 'genre_explorer' | 'night_owl' | 'early_bird' | 'social_butterfly'
+  | 'profile_complete' | 'top_picks_set' | 'bio_writer'
+
+export interface UserAchievement {
+  id: string
+  user_id: string
+  achievement_type: AchievementType
+  title: string
+  description: string
+  icon: string | null
+  progress: number
+  target: number
+  unlocked: boolean
+  unlocked_at: string | null
+  created_at: string
+}
+
+export type ActivityType =
+  | 'created_room' | 'joined_room' | 'became_friends' | 'unlocked_achievement'
+  | 'updated_top_picks' | 'updated_bio' | 'updated_avatar' | 'listening_milestone'
+
+export interface ActivityFeed {
+  id: string
+  user_id: string
+  activity_type: ActivityType
+  activity_data: string | null // JSON string
+  visibility: 'public' | 'friends' | 'private'
+  created_at: string
+}
+
+export interface ParsedActivity extends Omit<ActivityFeed, 'activity_data'> {
+  activity_data: {
+    room_id?: string
+    room_name?: string
+    friend_id?: string
+    friend_name?: string
+    achievement_type?: string
+    achievement_title?: string
+    milestone_value?: number
+    [key: string]: any
+  } | null
 }
 
 // Social features interfaces
@@ -2218,4 +2349,315 @@ export function getReportCountForEntity(entityType: string, entityId: string): n
 
   db.close()
   return result.count
+}
+
+// ============================================================================
+// Profile Enhancement Operations
+// ============================================================================
+
+/**
+ * Update user bio
+ */
+export function updateUserBio(userId: string, bio: string): boolean {
+  const db = getDb()
+
+  const result = db.prepare(`
+    UPDATE users SET bio = ? WHERE spotify_id = ?
+  `).run(bio, userId)
+
+  db.close()
+  return result.changes > 0
+}
+
+/**
+ * Update user custom status
+ */
+export function updateUserStatus(userId: string, customStatus: string): boolean {
+  const db = getDb()
+
+  const result = db.prepare(`
+    UPDATE users SET custom_status = ? WHERE spotify_id = ?
+  `).run(customStatus, userId)
+
+  db.close()
+  return result.changes > 0
+}
+
+/**
+ * Update user privacy settings
+ */
+export function updateUserPrivacySettings(userId: string, privacySettings: PrivacySettings): boolean {
+  const db = getDb()
+
+  const result = db.prepare(`
+    UPDATE users SET privacy_settings = ? WHERE spotify_id = ?
+  `).run(JSON.stringify(privacySettings), userId)
+
+  db.close()
+  return result.changes > 0
+}
+
+/**
+ * Get user with parsed privacy settings
+ */
+export function getParsedUser(userId: string): ParsedUser | null {
+  const user = getUser(userId)
+  if (!user) return null
+
+  return {
+    ...user,
+    privacy_settings: user.privacy_settings ? JSON.parse(user.privacy_settings) : null
+  }
+}
+
+/**
+ * Get default privacy settings
+ */
+export function getDefaultPrivacySettings(): PrivacySettings {
+  return {
+    profile_visibility: 'public',
+    activity_visibility: 'public',
+    show_listening: true
+  }
+}
+
+// ============================================================================
+// Achievements Operations
+// ============================================================================
+
+/**
+ * Initialize achievement for a user
+ */
+export function initializeAchievement(params: {
+  userId: string
+  achievementType: AchievementType
+  title: string
+  description: string
+  icon?: string
+  target?: number
+}): UserAchievement {
+  const db = getDb()
+
+  const id = `achievement_${Date.now()}_${Math.random().toString(36).substring(7)}`
+
+  db.prepare(`
+    INSERT INTO user_achievements (
+      id, user_id, achievement_type, title, description, icon, target
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    params.userId,
+    params.achievementType,
+    params.title,
+    params.description,
+    params.icon || null,
+    params.target || 1
+  )
+
+  const achievement = db.prepare('SELECT * FROM user_achievements WHERE id = ?')
+    .get(id) as UserAchievement
+
+  db.close()
+  return achievement
+}
+
+/**
+ * Update achievement progress
+ */
+export function updateAchievementProgress(
+  userId: string,
+  achievementType: AchievementType,
+  progress: number
+): UserAchievement | null {
+  const db = getDb()
+
+  // Get current achievement
+  const achievement = db.prepare(`
+    SELECT * FROM user_achievements
+    WHERE user_id = ? AND achievement_type = ?
+  `).get(userId, achievementType) as UserAchievement | undefined
+
+  if (!achievement) {
+    db.close()
+    return null
+  }
+
+  // Check if should be unlocked
+  const shouldUnlock = !achievement.unlocked && progress >= achievement.target
+
+  if (shouldUnlock) {
+    db.prepare(`
+      UPDATE user_achievements
+      SET progress = ?, unlocked = TRUE, unlocked_at = datetime('now')
+      WHERE user_id = ? AND achievement_type = ?
+    `).run(progress, userId, achievementType)
+  } else {
+    db.prepare(`
+      UPDATE user_achievements
+      SET progress = ?
+      WHERE user_id = ? AND achievement_type = ?
+    `).run(progress, userId, achievementType)
+  }
+
+  const updated = db.prepare(`
+    SELECT * FROM user_achievements
+    WHERE user_id = ? AND achievement_type = ?
+  `).get(userId, achievementType) as UserAchievement
+
+  db.close()
+  return updated
+}
+
+/**
+ * Unlock achievement
+ */
+export function unlockAchievement(userId: string, achievementType: AchievementType): boolean {
+  const db = getDb()
+
+  const result = db.prepare(`
+    UPDATE user_achievements
+    SET unlocked = TRUE, unlocked_at = datetime('now'), progress = target
+    WHERE user_id = ? AND achievement_type = ? AND unlocked = FALSE
+  `).run(userId, achievementType)
+
+  db.close()
+  return result.changes > 0
+}
+
+/**
+ * Get user achievements
+ */
+export function getUserAchievements(userId: string, unlockedOnly = false): UserAchievement[] {
+  const db = getDb()
+
+  let query = 'SELECT * FROM user_achievements WHERE user_id = ?'
+  if (unlockedOnly) {
+    query += ' AND unlocked = TRUE'
+  }
+  query += ' ORDER BY unlocked DESC, created_at DESC'
+
+  const achievements = db.prepare(query).all(userId) as UserAchievement[]
+
+  db.close()
+  return achievements
+}
+
+/**
+ * Get achievement progress
+ */
+export function getAchievementProgress(
+  userId: string,
+  achievementType: AchievementType
+): UserAchievement | null {
+  const db = getDb()
+
+  const achievement = db.prepare(`
+    SELECT * FROM user_achievements
+    WHERE user_id = ? AND achievement_type = ?
+  `).get(userId, achievementType) as UserAchievement | undefined
+
+  db.close()
+  return achievement || null
+}
+
+// ============================================================================
+// Activity Feed Operations
+// ============================================================================
+
+/**
+ * Create activity feed entry
+ */
+export function createActivity(params: {
+  userId: string
+  activityType: ActivityType
+  activityData?: Record<string, any>
+  visibility?: 'public' | 'friends' | 'private'
+}): ActivityFeed {
+  const db = getDb()
+
+  const id = `activity_${Date.now()}_${Math.random().toString(36).substring(7)}`
+
+  db.prepare(`
+    INSERT INTO activity_feed (id, user_id, activity_type, activity_data, visibility)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(
+    id,
+    params.userId,
+    params.activityType,
+    params.activityData ? JSON.stringify(params.activityData) : null,
+    params.visibility || 'public'
+  )
+
+  const activity = db.prepare('SELECT * FROM activity_feed WHERE id = ?').get(id) as ActivityFeed
+
+  db.close()
+  return activity
+}
+
+/**
+ * Get user activity feed
+ */
+export function getUserActivityFeed(userId: string, limit = 20, offset = 0): ParsedActivity[] {
+  const db = getDb()
+
+  const activities = db.prepare(`
+    SELECT * FROM activity_feed
+    WHERE user_id = ?
+    ORDER BY created_at DESC
+    LIMIT ? OFFSET ?
+  `).all(userId, limit, offset) as ActivityFeed[]
+
+  db.close()
+
+  return activities.map(activity => ({
+    ...activity,
+    activity_data: activity.activity_data ? JSON.parse(activity.activity_data) : null
+  }))
+}
+
+/**
+ * Get activity feed for friends (for timeline/feed view)
+ */
+export function getFriendsActivityFeed(userId: string, limit = 50): ParsedActivity[] {
+  const db = getDb()
+
+  const activities = db.prepare(`
+    SELECT a.*
+    FROM activity_feed a
+    INNER JOIN friendships f ON (
+      (f.user1_id = ? AND a.user_id = f.user2_id) OR
+      (f.user2_id = ? AND a.user_id = f.user1_id)
+    )
+    WHERE f.status = 'accepted'
+    AND (a.visibility = 'public' OR a.visibility = 'friends')
+    ORDER BY a.created_at DESC
+    LIMIT ?
+  `).all(userId, userId, limit) as ActivityFeed[]
+
+  db.close()
+
+  return activities.map(activity => ({
+    ...activity,
+    activity_data: activity.activity_data ? JSON.parse(activity.activity_data) : null
+  }))
+}
+
+/**
+ * Delete old activity feed entries (cleanup)
+ * Deletes activities older than 90 days
+ */
+export function cleanupOldActivities(): number {
+  const db = getDb()
+
+  const ninetyDaysAgo = new Date()
+  ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90)
+
+  const result = db.prepare(`
+    DELETE FROM activity_feed
+    WHERE created_at < ?
+  `).run(ninetyDaysAgo.toISOString())
+
+  db.close()
+  return result.changes
 }
