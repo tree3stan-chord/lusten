@@ -133,10 +133,10 @@ export const useSocket = (roomId: string, userId: string, isHost: boolean) => {
     }
   }, [roomId, userId]) // Removed isHost from dependencies
 
-  const emitTrackChange = useCallback((track: RoomState['currentTrack']) => {
+  const emitTrackChange = useCallback((track: RoomState['currentTrack'], hostAccessToken?: string) => {
     if (socket && isHostRef.current) {
       console.log('🎵 HOST: Emitting track change:', track?.name, track)
-      socket.emit('track-change', { roomId, track, userId })
+      socket.emit('track-change', { roomId, track, userId, hostAccessToken })
     } else {
       console.log('🎵 HOST: NOT emitting track change - socket:', !!socket, 'isHost:', isHostRef.current, 'track:', track?.name)
     }
