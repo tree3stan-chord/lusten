@@ -227,6 +227,26 @@ function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_room_history_room ON room_play_history(room_id);
     CREATE INDEX IF NOT EXISTS idx_room_history_played_at ON room_play_history(played_at);
     CREATE INDEX IF NOT EXISTS idx_room_history_room_time ON room_play_history(room_id, played_at DESC);
+
+    -- Notifications table (for user notifications)
+    CREATE TABLE IF NOT EXISTS notifications (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(spotify_id) ON DELETE CASCADE,
+      type TEXT NOT NULL CHECK (type IN ('friend_request', 'friend_accepted', 'friend_online', 'room_invite', 'mention', 'like', 'comment', 'system')),
+      title TEXT NOT NULL,
+      message TEXT NOT NULL,
+      data TEXT, -- JSON data with context (friend_id, room_id, post_id, etc.)
+      link TEXT, -- URL to navigate to when clicked
+      is_read BOOLEAN DEFAULT FALSE,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    -- Indexes for notifications
+    CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);
+    CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(is_read);
+    CREATE INDEX IF NOT EXISTS idx_notifications_user_read ON notifications(user_id, is_read);
+    CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_notifications_user_created ON notifications(user_id, created_at DESC);
   `)
 
   return db
@@ -295,6 +315,28 @@ export interface RoomBan {
   reason: string | null
   expires_at: string | null
   created_at: string
+}
+
+export interface Notification {
+  id: string
+  user_id: string
+  type: 'friend_request' | 'friend_accepted' | 'friend_online' | 'room_invite' | 'mention' | 'like' | 'comment' | 'system'
+  title: string
+  message: string
+  data: string | null // JSON string with context
+  link: string | null
+  is_read: boolean
+  created_at: string
+}
+
+export interface ParsedNotification extends Omit<Notification, 'data'> {
+  data: {
+    friend_id?: string
+    room_id?: string
+    post_id?: string
+    comment_id?: string
+    [key: string]: any
+  } | null
 }
 
 // Social features interfaces
@@ -1688,4 +1730,150 @@ export function autoUpdateRoomGenres(roomId: string): boolean {
 
   db.close()
   return true
+}
+
+// ============================================================================
+// NOTIFICATION FUNCTIONS
+// ============================================================================
+
+/**
+ * Create a notification for a user
+ */
+export function createNotification(params: {
+  userId: string
+  type: Notification['type']
+  title: string
+  message: string
+  data?: Record<string, any>
+  link?: string
+}): Notification {
+  const db = getDb()
+
+  const id = `notif_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+  const dataString = params.data ? JSON.stringify(params.data) : null
+
+  db.prepare(`
+    INSERT INTO notifications (id, user_id, type, title, message, data, link)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    params.userId,
+    params.type,
+    params.title,
+    params.message,
+    dataString,
+    params.link || null
+  )
+
+  const notification = db.prepare('SELECT * FROM notifications WHERE id = ?').get(id) as Notification
+
+  db.close()
+  return notification
+}
+
+/**
+ * Get notifications for a user with pagination
+ */
+export function getUserNotifications(
+  userId: string,
+  options: {
+    limit?: number
+    offset?: number
+    unreadOnly?: boolean
+  } = {}
+): ParsedNotification[] {
+  const db = getDb()
+
+  const { limit = 20, offset = 0, unreadOnly = false } = options
+
+  let query = 'SELECT * FROM notifications WHERE user_id = ?'
+  const params: any[] = [userId]
+
+  if (unreadOnly) {
+    query += ' AND is_read = FALSE'
+  }
+
+  query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?'
+  params.push(limit, offset)
+
+  const notifications = db.prepare(query).all(...params) as Notification[]
+
+  db.close()
+
+  return notifications.map(notif => ({
+    ...notif,
+    data: notif.data ? JSON.parse(notif.data) : null
+  }))
+}
+
+/**
+ * Get unread notification count for a user
+ */
+export function getUnreadCount(userId: string): number {
+  const db = getDb()
+
+  const result = db.prepare('SELECT COUNT(*) as count FROM notifications WHERE user_id = ? AND is_read = FALSE')
+    .get(userId) as { count: number }
+
+  db.close()
+  return result.count
+}
+
+/**
+ * Mark a notification as read
+ */
+export function markNotificationRead(notificationId: string, userId: string): boolean {
+  const db = getDb()
+
+  const result = db.prepare('UPDATE notifications SET is_read = TRUE WHERE id = ? AND user_id = ?')
+    .run(notificationId, userId)
+
+  db.close()
+  return result.changes > 0
+}
+
+/**
+ * Mark all notifications as read for a user
+ */
+export function markAllNotificationsRead(userId: string): number {
+  const db = getDb()
+
+  const result = db.prepare('UPDATE notifications SET is_read = TRUE WHERE user_id = ? AND is_read = FALSE')
+    .run(userId)
+
+  db.close()
+  return result.changes
+}
+
+/**
+ * Delete a notification
+ */
+export function deleteNotification(notificationId: string, userId: string): boolean {
+  const db = getDb()
+
+  const result = db.prepare('DELETE FROM notifications WHERE id = ? AND user_id = ?')
+    .run(notificationId, userId)
+
+  db.close()
+  return result.changes > 0
+}
+
+/**
+ * Delete old notifications (cleanup)
+ * Deletes read notifications older than 30 days
+ */
+export function cleanupOldNotifications(): number {
+  const db = getDb()
+
+  const thirtyDaysAgo = new Date()
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
+
+  const result = db.prepare(`
+    DELETE FROM notifications
+    WHERE is_read = TRUE
+    AND created_at < ?
+  `).run(thirtyDaysAgo.toISOString())
+
+  db.close()
+  return result.changes
 }
