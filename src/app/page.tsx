@@ -70,7 +70,7 @@ export default function Home() {
     }
   };
 
-  const handleCreateRoomSubmit = (roomName: string, roomType: 'private' | 'public' | 'profile') => {
+  const handleCreateRoomSubmit = (roomName: string, roomType: 'private' | 'public' | 'profile', genres?: string[]) => {
     try {
       if (!socket || !session?.user?.email) {
         alert('Unable to create room. Please try again.');
@@ -85,7 +85,8 @@ export default function Home() {
         roomId: newRoomId,
         roomName,
         userId,
-        roomType
+        roomType,
+        genres
       });
 
       // Listen for room created confirmation
@@ -156,6 +157,15 @@ export default function Home() {
                         My Profile
                       </a>
                       <a
+                        href="/discover"
+                        className="block px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                      >
+                        <svg className="inline w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
+                        Discover
+                      </a>
+                      <a
                         href="/social"
                         className="block px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
                       >
@@ -210,16 +220,27 @@ export default function Home() {
             Create shared listening experiences with friends. Host a room or join others to chat and enjoy music together in real-time.
           </p>
           
-          {/* Create Room Button */}
-          <button
-            onClick={handleCreateRoom}
-            className="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white px-8 py-4 rounded-full text-lg font-medium transition-all duration-200 shadow-lg hover:shadow-xl transform hover:scale-105 flex items-center gap-2 mx-auto"
-          >
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-            </svg>
-            Create Room
-          </button>
+          {/* Action Buttons */}
+          <div className="flex flex-col sm:flex-row gap-4 justify-center">
+            <button
+              onClick={handleCreateRoom}
+              className="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white px-8 py-4 rounded-full text-lg font-medium transition-all duration-200 shadow-lg hover:shadow-xl transform hover:scale-105 flex items-center gap-2 justify-center"
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+              </svg>
+              Create Room
+            </button>
+            <a
+              href="/discover"
+              className="bg-white dark:bg-gray-800 border-2 border-indigo-600 dark:border-indigo-400 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-gray-700 px-8 py-4 rounded-full text-lg font-medium transition-all duration-200 shadow-lg hover:shadow-xl transform hover:scale-105 flex items-center gap-2 justify-center"
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              Discover by Genre
+            </a>
+          </div>
         </div>
 
         {/* Public Rooms */}

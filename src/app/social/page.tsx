@@ -5,6 +5,7 @@ import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useSocialUpdates } from '../../hooks/useSocialUpdates';
+import SuggestedFriends from '../components/SuggestedFriends';
 // import { useRouter } from 'next/navigation';
 
 interface User {
@@ -127,8 +128,19 @@ export default function SocialPage() {
             <Link href="/" className="text-2xl font-bold text-gray-900 dark:text-white">
               LUSTEN
             </Link>
-            <div className="text-sm text-gray-600 dark:text-gray-300">
-              Social Hub
+            <div className="flex items-center space-x-6">
+              <Link
+                href="/discover"
+                className="text-sm font-medium text-gray-700 dark:text-gray-300 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
+              >
+                Discover
+              </Link>
+              <Link
+                href="/"
+                className="text-sm font-medium text-gray-700 dark:text-gray-300 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
+              >
+                Home
+              </Link>
             </div>
           </div>
         </div>
@@ -351,8 +363,12 @@ export default function SocialPage() {
             </div>
           </div>
 
-          {/* Right Column: Find Friends */}
+          {/* Right Column: Find Friends & Suggestions */}
           <div className="space-y-6">
+            {/* Friend Suggestions */}
+            <SuggestedFriends />
+
+            {/* Find Friends Search */}
             <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-6">
               <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">
                 Find Friends

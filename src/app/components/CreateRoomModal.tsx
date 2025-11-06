@@ -1,27 +1,83 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useSession } from 'next-auth/react';
 
 interface CreateRoomModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onCreateRoom: (roomName: string, roomType: 'private' | 'public' | 'profile') => void;
+  onCreateRoom: (roomName: string, roomType: 'private' | 'public' | 'profile', genres?: string[]) => void;
 }
 
+// Common music genres for suggestions
+const COMMON_GENRES = [
+  'Pop', 'Rock', 'Hip Hop', 'Electronic', 'Indie', 'Jazz', 'Classical',
+  'R&B', 'Country', 'Metal', 'Reggae', 'Blues', 'Folk', 'Latin', 'Dance'
+];
+
 export default function CreateRoomModal({ isOpen, onClose, onCreateRoom }: CreateRoomModalProps) {
+  const { data: session } = useSession();
   const [roomName, setRoomName] = useState('');
   const [roomType, setRoomType] = useState<'private' | 'public' | 'profile'>('private');
+  const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
+  const [userTopGenres, setUserTopGenres] = useState<string[]>([]);
+  const [showAllGenres, setShowAllGenres] = useState(false);
+
+  // Fetch user's top genres when modal opens
+  useEffect(() => {
+    if (isOpen && session?.user?.id) {
+      fetch(`/api/users/${session.user.id}/spotify-stats`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.stats?.top_genres) {
+            const genres = data.stats.top_genres.map((g: { name: string }) => g.name);
+            setUserTopGenres(genres);
+            // Pre-select user's top 3 genres for public/profile rooms
+            if (roomType !== 'private') {
+              setSelectedGenres(genres.slice(0, 3));
+            }
+          }
+        })
+        .catch(err => console.error('Error fetching user genres:', err));
+    }
+  }, [isOpen, session, roomType]);
+
+  // Reset form when modal closes
+  useEffect(() => {
+    if (!isOpen) {
+      setRoomName('');
+      setRoomType('private');
+      setSelectedGenres([]);
+      setShowAllGenres(false);
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (roomName.trim()) {
-      onCreateRoom(roomName.trim(), roomType);
+      // Only include genres for public/profile rooms
+      const genres = roomType === 'private' ? undefined : selectedGenres;
+      onCreateRoom(roomName.trim(), roomType, genres);
       setRoomName('');
       setRoomType('private');
+      setSelectedGenres([]);
     }
   };
+
+  const toggleGenre = (genre: string) => {
+    setSelectedGenres(prev =>
+      prev.includes(genre)
+        ? prev.filter(g => g !== genre)
+        : prev.length < 5
+          ? [...prev, genre]
+          : prev
+    );
+  };
+
+  const showGenreSelector = roomType === 'public';
+  const genresToShow = showAllGenres ? COMMON_GENRES : [...userTopGenres, ...COMMON_GENRES.filter(g => !userTopGenres.includes(g))].slice(0, 8);
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
@@ -108,7 +164,59 @@ export default function CreateRoomModal({ isOpen, onClose, onCreateRoom }: Creat
               </label>
             </div>
           </div>
-          
+
+          {/* Genre Selector - Only for Public Rooms */}
+          {showGenreSelector && (
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Room Genres (Select up to 5)
+              </label>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+                Help others discover your room by tagging relevant genres
+              </p>
+
+              <div className="flex flex-wrap gap-2 mb-3">
+                {genresToShow.map((genre) => {
+                  const isSelected = selectedGenres.includes(genre);
+                  const isUserGenre = userTopGenres.includes(genre);
+
+                  return (
+                    <button
+                      key={genre}
+                      type="button"
+                      onClick={() => toggleGenre(genre)}
+                      disabled={!isSelected && selectedGenres.length >= 5}
+                      className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                        isSelected
+                          ? 'bg-indigo-600 text-white hover:bg-indigo-700'
+                          : isUserGenre
+                            ? 'bg-purple-100 dark:bg-purple-900 text-purple-800 dark:text-purple-200 hover:bg-purple-200 dark:hover:bg-purple-800'
+                            : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+                      } disabled:opacity-50 disabled:cursor-not-allowed`}
+                    >
+                      {genre}
+                      {isUserGenre && !isSelected && ' ⭐'}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowAllGenres(!showAllGenres)}
+                className="text-sm text-indigo-600 dark:text-indigo-400 hover:underline"
+              >
+                {showAllGenres ? 'Show less' : 'Show more genres'}
+              </button>
+
+              {selectedGenres.length > 0 && (
+                <div className="mt-3 text-xs text-gray-600 dark:text-gray-400">
+                  Selected: {selectedGenres.join(', ')}
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="flex gap-3">
             <button
               type="button"

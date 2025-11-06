@@ -44,7 +44,34 @@ function runMigrations() {
         db.prepare('ALTER TABLE users ADD COLUMN avatar_updated_at TEXT').run()
         migrationsRun++
       }
-      
+
+      // Migration 2: Add genres column to rooms table
+      const roomColumns = db.prepare("PRAGMA table_info(rooms)").all() as Array<{ name: string }>
+      const roomColumnNames = roomColumns.map(col => col.name)
+
+      if (!roomColumnNames.includes('genres')) {
+        console.log('  ➕ Adding genres column to rooms table...')
+        db.prepare('ALTER TABLE rooms ADD COLUMN genres TEXT').run()
+        migrationsRun++
+
+        // Auto-populate genres for existing rooms based on owner's top genres
+        console.log('  🎵 Populating genres for existing rooms...')
+        const rooms = db.prepare('SELECT id, owner_id FROM rooms WHERE owner_id IS NOT NULL').all() as Array<{ id: string, owner_id: string }>
+
+        for (const room of rooms) {
+          const stats = db.prepare('SELECT top_genres FROM user_spotify_stats WHERE user_id = ?').get(room.owner_id) as { top_genres: string } | undefined
+          if (stats && stats.top_genres) {
+            try {
+              const topGenres = JSON.parse(stats.top_genres) as Array<{ name: string, count: number }>
+              const genreNames = topGenres.slice(0, 3).map(g => g.name)
+              db.prepare('UPDATE rooms SET genres = ? WHERE id = ?').run(JSON.stringify(genreNames), room.id)
+            } catch (e) {
+              // Skip rooms with invalid genre data
+            }
+          }
+        }
+      }
+
       // Future migrations go here...
       
       if (migrationsRun > 0) {
@@ -87,7 +114,7 @@ function initializeDatabase() {
       created_at TEXT DEFAULT (datetime('now'))
     );
 
-    -- Rooms table  
+    -- Rooms table
     CREATE TABLE IF NOT EXISTS rooms (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -96,6 +123,7 @@ function initializeDatabase() {
       owner_id TEXT REFERENCES users(spotify_id) ON DELETE SET NULL,
       max_users INTEGER DEFAULT 50,
       password TEXT,
+      genres TEXT,
       is_active BOOLEAN DEFAULT TRUE,
       created_at TEXT DEFAULT (datetime('now')),
       last_active TEXT DEFAULT (datetime('now'))
@@ -208,6 +236,7 @@ export interface Room {
   owner_id: string | null
   max_users: number
   password: string | null
+  genres: string | null
   is_active: boolean
   created_at: string
   last_active: string
@@ -359,23 +388,24 @@ export function updateUser(spotify_id: string, updates: Partial<User>): User | n
 // Room operations
 export function createRoom(roomData: Omit<Room, 'created_at' | 'last_active'>): Room {
   const db = getDb()
-  
+
   const stmt = db.prepare(`
-    INSERT INTO rooms (id, name, description, type, owner_id, max_users, password, is_active)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO rooms (id, name, description, type, owner_id, max_users, password, genres, is_active)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
-  
+
   stmt.run(
-    roomData.id, 
-    roomData.name, 
+    roomData.id,
+    roomData.name,
     roomData.description,
-    roomData.type, 
+    roomData.type,
     roomData.owner_id,
     roomData.max_users,
     roomData.password,
+    roomData.genres,
     roomData.is_active
   )
-  
+
   const room = db.prepare('SELECT * FROM rooms WHERE id = ?').get(roomData.id) as Room
   db.close()
   return room
@@ -437,24 +467,37 @@ export function getUserProfileRoom(spotify_id: string): Room | null {
 // Profile room management
 export function createOrUpdateProfileRoom(userId: string, roomName: string): Room {
   const db = getDb()
-  
+
   // Delete existing profile room if any
   db.prepare('DELETE FROM rooms WHERE type = \'profile\' AND owner_id = ?').run(userId)
-  
+
   // Generate room ID
   const roomId = Math.random().toString(36).substring(2, 15)
-  
+
+  // Get user's top genres for the room
+  let genres: string | null = null
+  const stats = db.prepare('SELECT top_genres FROM user_spotify_stats WHERE user_id = ?').get(userId) as { top_genres: string } | undefined
+  if (stats && stats.top_genres) {
+    try {
+      const topGenres = JSON.parse(stats.top_genres) as Array<{ name: string, count: number }>
+      const genreNames = topGenres.slice(0, 3).map(g => g.name)
+      genres = JSON.stringify(genreNames)
+    } catch (e) {
+      // If parsing fails, leave genres as null
+    }
+  }
+
   // Create new profile room
   const stmt = db.prepare(`
-    INSERT INTO rooms (id, name, description, type, owner_id, max_users, password, is_active)
-    VALUES (?, ?, NULL, 'profile', ?, 50, NULL, TRUE)
+    INSERT INTO rooms (id, name, description, type, owner_id, max_users, password, genres, is_active)
+    VALUES (?, ?, NULL, 'profile', ?, 50, NULL, ?, TRUE)
   `)
-  
-  stmt.run(roomId, roomName, userId)
-  
+
+  stmt.run(roomId, roomName, userId, genres)
+
   // Update user's profile_room_id
   db.prepare('UPDATE users SET profile_room_id = ? WHERE spotify_id = ?').run(roomId, userId)
-  
+
   const room = db.prepare('SELECT * FROM rooms WHERE id = ?').get(roomId) as Room
   db.close()
   return room
@@ -805,14 +848,14 @@ export function getRoom(roomId: string): Room | null {
 }
 
 export function updateRoomDetails(
-  roomId: string, 
+  roomId: string,
   updates: Partial<Omit<Room, 'id' | 'created_at'>>
 ): Room | null {
   const db = getDb()
-  
+
   const updateFields = []
   const updateValues = []
-  
+
   if (updates.name !== undefined) {
     updateFields.push('name = ?')
     updateValues.push(updates.name)
@@ -833,31 +876,35 @@ export function updateRoomDetails(
     updateFields.push('password = ?')
     updateValues.push(updates.password)
   }
+  if (updates.genres !== undefined) {
+    updateFields.push('genres = ?')
+    updateValues.push(updates.genres)
+  }
   if (updates.is_active !== undefined) {
     updateFields.push('is_active = ?')
     updateValues.push(updates.is_active)
   }
-  
+
   if (updateFields.length === 0) {
     db.close()
     return null
   }
-  
+
   updateFields.push('last_active = datetime(\'now\')')
   updateValues.push(roomId)
-  
+
   const result = db.prepare(`
-    UPDATE rooms 
+    UPDATE rooms
     SET ${updateFields.join(', ')}
     WHERE id = ?
   `).run(...updateValues)
-  
+
   if (result.changes > 0) {
     const room = db.prepare('SELECT * FROM rooms WHERE id = ?').get(roomId) as Room | undefined
     db.close()
     return room || null
   }
-  
+
   db.close()
   return null
 }
@@ -1153,20 +1200,286 @@ export function updateUserSpotifyStats(
   }
 ): boolean {
   const db = getDb()
-  
+
   const stmt = db.prepare(`
-    INSERT OR REPLACE INTO user_spotify_stats 
+    INSERT OR REPLACE INTO user_spotify_stats
     (user_id, top_artists, top_albums, top_genres, last_updated)
     VALUES (?, ?, ?, ?, datetime('now'))
   `)
-  
+
   const result = stmt.run(
     userId,
     JSON.stringify(stats.top_artists),
     JSON.stringify(stats.top_albums),
     JSON.stringify(stats.top_genres)
   )
-  
+
   db.close()
   return result.changes > 0
+}
+
+export function deleteUserSpotifyStats(userId: string): boolean {
+  const db = getDb()
+
+  const result = db.prepare(`
+    DELETE FROM user_spotify_stats
+    WHERE user_id = ?
+  `).run(userId)
+
+  db.close()
+  return result.changes > 0
+}
+
+// ── Genre Discovery Functions ────────────────────────────────────────────
+
+export interface RoomWithGenres extends Room {
+  parsedGenres: string[]
+}
+
+export function getRoomsByGenre(genre: string): RoomWithGenres[] {
+  const db = getDb()
+
+  // Get all active public/profile rooms
+  const rooms = db.prepare(`
+    SELECT * FROM rooms
+    WHERE type IN ('public', 'profile')
+      AND is_active = TRUE
+    ORDER BY last_active DESC
+  `).all() as Room[]
+
+  db.close()
+
+  // Filter rooms that contain the genre in their genres JSON array
+  return rooms
+    .map(room => {
+      if (!room.genres) return null
+
+      try {
+        const parsedGenres = JSON.parse(room.genres) as string[]
+        // Case-insensitive genre matching
+        if (parsedGenres.some(g => g.toLowerCase() === genre.toLowerCase())) {
+          return { ...room, parsedGenres }
+        }
+      } catch (e) {
+        // Skip rooms with invalid JSON
+      }
+      return null
+    })
+    .filter((room): room is RoomWithGenres => room !== null)
+}
+
+export function getPopularGenres(): Array<{ name: string; count: number }> {
+  const db = getDb()
+
+  // Get all genres from active rooms
+  const rooms = db.prepare(`
+    SELECT genres FROM rooms
+    WHERE type IN ('public', 'profile')
+      AND is_active = TRUE
+      AND genres IS NOT NULL
+  `).all() as Array<{ genres: string }>
+
+  db.close()
+
+  // Count genre occurrences
+  const genreCounts = new Map<string, number>()
+
+  for (const room of rooms) {
+    try {
+      const genres = JSON.parse(room.genres) as string[]
+      for (const genre of genres) {
+        const normalizedGenre = genre.trim()
+        genreCounts.set(normalizedGenre, (genreCounts.get(normalizedGenre) || 0) + 1)
+      }
+    } catch (e) {
+      // Skip invalid JSON
+    }
+  }
+
+  // Convert to array and sort by count
+  return Array.from(genreCounts.entries())
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count)
+}
+
+export function searchRoomsByGenres(genres: string[]): RoomWithGenres[] {
+  const db = getDb()
+
+  // Get all active public/profile rooms
+  const rooms = db.prepare(`
+    SELECT * FROM rooms
+    WHERE type IN ('public', 'profile')
+      AND is_active = TRUE
+    ORDER BY last_active DESC
+  `).all() as Room[]
+
+  db.close()
+
+  const lowerGenres = genres.map(g => g.toLowerCase())
+
+  // Filter rooms that contain any of the specified genres
+  return rooms
+    .map(room => {
+      if (!room.genres) return null
+
+      try {
+        const parsedGenres = JSON.parse(room.genres) as string[]
+        const hasMatch = parsedGenres.some(g =>
+          lowerGenres.includes(g.toLowerCase())
+        )
+
+        if (hasMatch) {
+          return { ...room, parsedGenres }
+        }
+      } catch (e) {
+        // Skip rooms with invalid JSON
+      }
+      return null
+    })
+    .filter((room): room is RoomWithGenres => room !== null)
+}
+
+// Get all public rooms with parsed genres
+export function getPublicRoomsWithGenres(): RoomWithGenres[] {
+  const db = getDb()
+
+  const rooms = db.prepare(`
+    SELECT * FROM rooms
+    WHERE type IN ('public', 'profile')
+      AND is_active = TRUE
+    ORDER BY last_active DESC
+  `).all() as Room[]
+
+  db.close()
+
+  return rooms.map(room => {
+    let parsedGenres: string[] = []
+    if (room.genres) {
+      try {
+        parsedGenres = JSON.parse(room.genres) as string[]
+      } catch (e) {
+        // Leave as empty array
+      }
+    }
+    return { ...room, parsedGenres }
+  })
+}
+
+// ── Social Features: Mutual Friends & Suggestions ───────────────────────
+
+export function getMutualFriends(userId1: string, userId2: string): User[] {
+  const db = getDb()
+
+  // Get friends of both users
+  const user1Friends = db.prepare(`
+    SELECT CASE
+      WHEN user1_id = ? THEN user2_id
+      ELSE user1_id
+    END as friend_id
+    FROM friendships
+    WHERE (user1_id = ? OR user2_id = ?)
+      AND status = 'accepted'
+  `).all(userId1, userId1, userId1) as Array<{ friend_id: string }>
+
+  const user2Friends = db.prepare(`
+    SELECT CASE
+      WHEN user1_id = ? THEN user2_id
+      ELSE user1_id
+    END as friend_id
+    FROM friendships
+    WHERE (user1_id = ? OR user2_id = ?)
+      AND status = 'accepted'
+  `).all(userId2, userId2, userId2) as Array<{ friend_id: string }>
+
+  // Find intersection
+  const user1FriendIds = new Set(user1Friends.map(f => f.friend_id))
+  const mutualFriendIds = user2Friends
+    .map(f => f.friend_id)
+    .filter(id => user1FriendIds.has(id))
+
+  if (mutualFriendIds.length === 0) {
+    db.close()
+    return []
+  }
+
+  // Get user details for mutual friends
+  const placeholders = mutualFriendIds.map(() => '?').join(',')
+  const mutualFriends = db.prepare(`
+    SELECT * FROM users WHERE spotify_id IN (${placeholders})
+  `).all(...mutualFriendIds) as User[]
+
+  db.close()
+  return mutualFriends
+}
+
+export function getFriendSuggestions(userId: string, limit = 10): Array<User & { reason: string; score: number }> {
+  const db = getDb()
+
+  // Get user's current friends and pending requests
+  const existingConnections = db.prepare(`
+    SELECT CASE
+      WHEN user1_id = ? THEN user2_id
+      ELSE user1_id
+    END as connected_id
+    FROM friendships
+    WHERE (user1_id = ? OR user2_id = ?)
+  `).all(userId, userId, userId) as Array<{ connected_id: string }>
+
+  const excludedIds = new Set([userId, ...existingConnections.map(c => c.connected_id)])
+
+  // Get user's top genres for matching
+  const userStats = db.prepare('SELECT top_genres FROM user_spotify_stats WHERE user_id = ?')
+    .get(userId) as { top_genres: string } | undefined
+
+  let userGenres: string[] = []
+  if (userStats?.top_genres) {
+    try {
+      const parsed = JSON.parse(userStats.top_genres) as Array<{ name: string }>
+      userGenres = parsed.map(g => g.name.toLowerCase())
+    } catch (e) {
+      // Invalid JSON
+    }
+  }
+
+  // Get all users with genres
+  const allUsersWithGenres = db.prepare(`
+    SELECT u.*, s.top_genres
+    FROM users u
+    LEFT JOIN user_spotify_stats s ON u.spotify_id = s.user_id
+    WHERE s.top_genres IS NOT NULL
+  `).all() as Array<User & { top_genres: string }>
+
+  db.close()
+
+  // Score each user based on genre overlap
+  const suggestions: Array<User & { reason: string; score: number }> = []
+
+  for (const user of allUsersWithGenres) {
+    if (excludedIds.has(user.spotify_id)) continue
+
+    try {
+      const theirGenres = JSON.parse(user.top_genres) as Array<{ name: string }>
+      const theirGenreNames = theirGenres.map(g => g.name.toLowerCase())
+
+      // Calculate genre overlap
+      const overlap = userGenres.filter(g => theirGenreNames.includes(g))
+      const score = overlap.length
+
+      if (score > 0) {
+        suggestions.push({
+          ...user,
+          top_genres: undefined as any, // Remove internal field
+          reason: `Shares ${overlap.slice(0, 2).join(', ')} genres`,
+          score
+        })
+      }
+    } catch (e) {
+      // Skip users with invalid genre data
+    }
+  }
+
+  // Sort by score (descending) and return top N
+  return suggestions
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
 }
