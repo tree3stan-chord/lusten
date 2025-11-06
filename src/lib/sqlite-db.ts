@@ -209,6 +209,24 @@ function initializeDatabase() {
     -- Additional indexes for social features
     CREATE INDEX IF NOT EXISTS idx_user_top_picks_user ON user_top_picks(user_id);
     CREATE INDEX IF NOT EXISTS idx_user_top_picks_position ON user_top_picks(user_id, position);
+
+    -- Room play history (for real-time genre detection and analytics)
+    CREATE TABLE IF NOT EXISTS room_play_history (
+      id TEXT PRIMARY KEY,
+      room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+      track_id TEXT NOT NULL,
+      track_name TEXT NOT NULL,
+      artist_ids TEXT NOT NULL,
+      artist_names TEXT NOT NULL,
+      detected_genres TEXT,
+      played_at TEXT DEFAULT (datetime('now')),
+      played_by TEXT REFERENCES users(spotify_id) ON DELETE SET NULL
+    );
+
+    -- Indexes for play history queries
+    CREATE INDEX IF NOT EXISTS idx_room_history_room ON room_play_history(room_id);
+    CREATE INDEX IF NOT EXISTS idx_room_history_played_at ON room_play_history(played_at);
+    CREATE INDEX IF NOT EXISTS idx_room_history_room_time ON room_play_history(room_id, played_at DESC);
   `)
 
   return db
@@ -1482,4 +1500,192 @@ export function getFriendSuggestions(userId: string, limit = 10): Array<User & {
   return suggestions
     .sort((a, b) => b.score - a.score)
     .slice(0, limit)
+}
+
+// ── Room Play History & Genre Analysis ──────────────────────────────────
+
+export interface RoomPlayHistoryEntry {
+  id: string
+  room_id: string
+  track_id: string
+  track_name: string
+  artist_ids: string // JSON array
+  artist_names: string // JSON array
+  detected_genres: string | null // JSON array
+  played_at: string
+  played_by: string | null
+}
+
+export interface ParsedPlayHistoryEntry extends Omit<RoomPlayHistoryEntry, 'artist_ids' | 'artist_names' | 'detected_genres'> {
+  artist_ids: string[]
+  artist_names: string[]
+  detected_genres: string[]
+}
+
+export interface RoomGenreAnalysis {
+  room_id: string
+  current_genres: string[]
+  suggested_genres: string[]
+  genre_stats: Array<{ genre: string; count: number; percentage: number }>
+  total_tracks: number
+  confidence: 'high' | 'medium' | 'low'
+  should_update: boolean
+}
+
+export function addToPlayHistory(
+  roomId: string,
+  trackId: string,
+  trackName: string,
+  artistIds: string[],
+  artistNames: string[],
+  detectedGenres: string[],
+  playedBy: string | null
+): RoomPlayHistoryEntry {
+  const db = getDb()
+  const id = Math.random().toString(36).substring(2, 15)
+
+  const stmt = db.prepare(`
+    INSERT INTO room_play_history
+    (id, room_id, track_id, track_name, artist_ids, artist_names, detected_genres, played_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `)
+
+  stmt.run(
+    id,
+    roomId,
+    trackId,
+    trackName,
+    JSON.stringify(artistIds),
+    JSON.stringify(artistNames),
+    JSON.stringify(detectedGenres),
+    playedBy
+  )
+
+  const entry = db.prepare('SELECT * FROM room_play_history WHERE id = ?').get(id) as RoomPlayHistoryEntry
+
+  db.close()
+  return entry
+}
+
+export function getRecentPlayHistory(roomId: string, limit = 20): ParsedPlayHistoryEntry[] {
+  const db = getDb()
+
+  const entries = db.prepare(`
+    SELECT * FROM room_play_history
+    WHERE room_id = ?
+    ORDER BY played_at DESC
+    LIMIT ?
+  `).all(roomId, limit) as RoomPlayHistoryEntry[]
+
+  db.close()
+
+  return entries.map(entry => ({
+    ...entry,
+    artist_ids: JSON.parse(entry.artist_ids),
+    artist_names: JSON.parse(entry.artist_names),
+    detected_genres: entry.detected_genres ? JSON.parse(entry.detected_genres) : []
+  }))
+}
+
+export function analyzeRoomGenres(roomId: string): RoomGenreAnalysis {
+  const db = getDb()
+
+  // Get current room genres
+  const room = db.prepare('SELECT genres FROM rooms WHERE id = ?').get(roomId) as { genres: string | null } | undefined
+  const currentGenres: string[] = room?.genres ? JSON.parse(room.genres) : []
+
+  // Get recent play history
+  const entries = db.prepare(`
+    SELECT * FROM room_play_history
+    WHERE room_id = ?
+    ORDER BY played_at DESC
+    LIMIT 20
+  `).all(roomId) as RoomPlayHistoryEntry[]
+
+  db.close()
+
+  if (entries.length === 0) {
+    return {
+      room_id: roomId,
+      current_genres: currentGenres,
+      suggested_genres: [],
+      genre_stats: [],
+      total_tracks: 0,
+      confidence: 'low',
+      should_update: false
+    }
+  }
+
+  // Count genres across all entries
+  const genreCounts = new Map<string, number>()
+
+  entries.forEach(entry => {
+    if (entry.detected_genres) {
+      try {
+        const genres = JSON.parse(entry.detected_genres) as string[]
+        genres.forEach(genre => {
+          genreCounts.set(genre, (genreCounts.get(genre) || 0) + 1)
+        })
+      } catch (e) {
+        // Skip invalid JSON
+      }
+    }
+  })
+
+  // Calculate statistics
+  const totalTracks = entries.length
+  const genreStats = Array.from(genreCounts.entries())
+    .map(([genre, count]) => ({
+      genre,
+      count,
+      percentage: Math.round((count / totalTracks) * 100)
+    }))
+    .sort((a, b) => b.count - a.count)
+
+  // Suggest top 3 genres that appear in >30% of tracks
+  const suggestedGenres = genreStats
+    .filter(stat => stat.percentage >= 30)
+    .slice(0, 3)
+    .map(stat => stat.genre)
+
+  // Determine confidence
+  let confidence: 'high' | 'medium' | 'low' = 'low'
+  if (totalTracks >= 15 && suggestedGenres.length >= 2) {
+    confidence = 'high'
+  } else if (totalTracks >= 8 && suggestedGenres.length >= 1) {
+    confidence = 'medium'
+  }
+
+  // Should update if suggested genres differ significantly from current
+  const shouldUpdate =
+    confidence === 'high' &&
+    suggestedGenres.length > 0 &&
+    !suggestedGenres.every(g => currentGenres.includes(g))
+
+  return {
+    room_id: roomId,
+    current_genres: currentGenres,
+    suggested_genres: suggestedGenres,
+    genre_stats: genreStats,
+    total_tracks: totalTracks,
+    confidence,
+    should_update
+  }
+}
+
+export function autoUpdateRoomGenres(roomId: string): boolean {
+  const analysis = analyzeRoomGenres(roomId)
+
+  if (!analysis.should_update || analysis.suggested_genres.length === 0) {
+    return false
+  }
+
+  const db = getDb()
+
+  // Update room genres with suggested genres
+  db.prepare('UPDATE rooms SET genres = ? WHERE id = ?')
+    .run(JSON.stringify(analysis.suggested_genres), roomId)
+
+  db.close()
+  return true
 }

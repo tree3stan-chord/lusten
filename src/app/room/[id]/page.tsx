@@ -8,6 +8,8 @@ import SpotifyPlayer from '../../components/SpotifyPlayer';
 import ShareModal from '../../components/ShareModal';
 import EditRoomModal from '../../components/EditRoomModal';
 import UserManagementModal from '../../components/UserManagementModal';
+import LiveGenreIndicator from '../../components/LiveGenreIndicator';
+import RoomGenreStats from '../../components/RoomGenreStats';
 import { useSocket } from '../../hooks/useSocket';
 import type { Room } from '../../../lib/sqlite-db';
 
@@ -38,6 +40,7 @@ export default function RoomPage({ params }: RoomPageProps) {
   const [showShareModal, setShowShareModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showUserModal, setShowUserModal] = useState(false);
+  const [genreRefreshTrigger, setGenreRefreshTrigger] = useState(0);
 
   // Initialize socket connection
   const userId = session?.user?.email || 'anonymous';
@@ -54,6 +57,13 @@ export default function RoomPage({ params }: RoomPageProps) {
       }
     }
   }, [roomState, userId, isHost]);
+
+  // Refresh genre indicators when track changes
+  React.useEffect(() => {
+    if (roomState?.currentTrack) {
+      setGenreRefreshTrigger(prev => prev + 1);
+    }
+  }, [roomState?.currentTrack?.id]);
 
   useEffect(() => {
     let mounted = true;
@@ -107,8 +117,10 @@ export default function RoomPage({ params }: RoomPageProps) {
     };
     duration_ms: number;
   }) => {
-    emitTrackChange(track);
-  }, [emitTrackChange]);
+    // Pass access token for genre detection
+    const accessToken = (session as any)?.accessToken;
+    emitTrackChange(track, accessToken);
+  }, [emitTrackChange, session]);
 
   const handlePlayStateChange = useCallback((isPlaying: boolean, position?: number) => {
     emitPlaybackState(isPlaying, position || 0);
@@ -309,7 +321,7 @@ export default function RoomPage({ params }: RoomPageProps) {
           {/* Music Player Section */}
           <div className="lg:col-span-2">
             <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-6">Now Playing</h3>
-            <SpotifyPlayer 
+            <SpotifyPlayer
               isHost={isHost}
               onTrackChange={handleTrackChange}
               onPlayStateChange={handlePlayStateChange}
@@ -321,6 +333,21 @@ export default function RoomPage({ params }: RoomPageProps) {
               syncEvents={syncEvents}
               onSyncEventHandled={clearSyncEvents}
             />
+
+            {/* Live Genre Detection - Only for public rooms */}
+            {roomDetails?.type === 'public' && (
+              <>
+                <LiveGenreIndicator
+                  roomId={roomId}
+                  currentGenres={roomDetails?.genres || []}
+                  refreshTrigger={genreRefreshTrigger}
+                />
+                <RoomGenreStats
+                  roomId={roomId}
+                  refreshTrigger={genreRefreshTrigger}
+                />
+              </>
+            )}
           </div>
 
           {/* Chat Section */}

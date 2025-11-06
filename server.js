@@ -265,10 +265,10 @@ app.prepare().then(() => {
       }
     })
 
-    socket.on('track-change', ({ roomId, track, userId }) => {
+    socket.on('track-change', async ({ roomId, track, userId, hostAccessToken }) => {
       console.log(`Track change from ${userId} in room ${roomId}:`, track.name)
       const room = rooms.get(roomId)
-      
+
       logToEndpoint('track-change-attempt', {
         roomId,
         userId,
@@ -278,7 +278,7 @@ app.prepare().then(() => {
         hostId: room?.hostId,
         userCount: room?.users.size
       })
-      
+
       if (room && userId === room.hostId) {
         room.currentTrack = track
         room.lastUpdate = Date.now()
@@ -289,6 +289,77 @@ app.prepare().then(() => {
           listenerCount: room.users.size - 1
         })
         socket.to(roomId).emit('track-changed', track)
+
+        // Phase 2: Detect genres and store in play history (async, don't block)
+        if (hostAccessToken && track.id && track.artists && room.type === 'public') {
+          try {
+            // Extract artist IDs and names
+            const artistIds = track.artists.map(a => a.id)
+            const artistNames = track.artists.map(a => a.name)
+
+            // Fetch artist genres from Spotify
+            const genreResponse = await fetch('https://api.spotify.com/v1/artists?ids=' + artistIds.slice(0, 50).join(','), {
+              headers: {
+                'Authorization': `Bearer ${hostAccessToken}`,
+                'Content-Type': 'application/json'
+              }
+            })
+
+            let detectedGenres = []
+            if (genreResponse.ok) {
+              const genreData = await genreResponse.json()
+              const genreCounts = new Map()
+
+              // Count genres from all artists
+              if (genreData.artists) {
+                genreData.artists.forEach(artist => {
+                  if (artist && artist.genres) {
+                    artist.genres.forEach(genre => {
+                      const formatted = genre.split(/[-_\s]+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ')
+                      genreCounts.set(formatted, (genreCounts.get(formatted) || 0) + 1)
+                    })
+                  }
+                })
+              }
+
+              // Get top 5 genres
+              detectedGenres = Array.from(genreCounts.entries())
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 5)
+                .map(([genre]) => genre)
+
+              console.log(`🎵 Detected genres for "${track.name}":`, detectedGenres)
+            }
+
+            // Store in play history
+            await fetch(`${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/api/rooms/${roomId}/play-history`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                trackId: track.id,
+                trackName: track.name,
+                artistIds,
+                artistNames,
+                detectedGenres,
+                playedBy: userId
+              })
+            })
+
+            // After 10 tracks, analyze and maybe auto-update room genres
+            const historyCount = room.trackCount || 0
+            room.trackCount = historyCount + 1
+
+            if (room.trackCount % 10 === 0) {
+              console.log(`🎵 Analyzing genres for room ${roomId} after ${room.trackCount} tracks...`)
+              // Trigger genre analysis (will auto-update if confidence is high)
+              fetch(`${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/api/rooms/${roomId}/analyze-genres`, {
+                method: 'POST'
+              }).catch(e => console.error('Genre analysis failed:', e))
+            }
+          } catch (error) {
+            console.error('Error detecting/storing genres:', error)
+          }
+        }
       } else {
         const reason = !room ? 'room not found' : userId !== room.hostId ? 'not host' : 'unknown'
         console.log('Track change rejected:', reason)
