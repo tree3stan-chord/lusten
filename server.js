@@ -20,6 +20,13 @@ const userSockets = new Map() // userId -> socketId mapping
 // Security manager
 const securityManager = new SecurityManager()
 
+// Helper function to send notification to specific user
+function sendNotificationToUser(io, userId, notification) {
+  // Send to user's notification room (if they're subscribed)
+  io.to(`notifications-${userId}`).emit('notification', notification)
+  console.log(`📬 Sent notification to user ${userId}:`, notification.type)
+}
+
 // Logging function to capture server events
 const logToEndpoint = async (event, data, level = 'info') => {
   try {
@@ -91,6 +98,14 @@ app.prepare().then(() => {
         } catch (error) {
           console.error('Failed to mark user as online:', error)
         }
+      }
+    })
+
+    // Handle subscribing to notifications
+    socket.on('subscribe-notifications', ({ userId }) => {
+      if (userId) {
+        socket.join(`notifications-${userId}`)
+        console.log(`User ${userId} subscribed to notifications`)
       }
     })
 
