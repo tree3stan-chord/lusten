@@ -247,6 +247,43 @@ function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_notifications_user_read ON notifications(user_id, is_read);
     CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_notifications_user_created ON notifications(user_id, created_at DESC);
+
+    -- User blocks table (for blocking other users)
+    CREATE TABLE IF NOT EXISTS user_blocks (
+      id TEXT PRIMARY KEY,
+      blocker_id TEXT NOT NULL REFERENCES users(spotify_id) ON DELETE CASCADE,
+      blocked_id TEXT NOT NULL REFERENCES users(spotify_id) ON DELETE CASCADE,
+      reason TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(blocker_id, blocked_id),
+      CHECK(blocker_id != blocked_id)
+    );
+
+    -- Indexes for user blocks
+    CREATE INDEX IF NOT EXISTS idx_user_blocks_blocker ON user_blocks(blocker_id);
+    CREATE INDEX IF NOT EXISTS idx_user_blocks_blocked ON user_blocks(blocked_id);
+    CREATE INDEX IF NOT EXISTS idx_user_blocks_created ON user_blocks(created_at DESC);
+
+    -- User reports table (for reporting users and rooms)
+    CREATE TABLE IF NOT EXISTS user_reports (
+      id TEXT PRIMARY KEY,
+      reporter_id TEXT NOT NULL REFERENCES users(spotify_id) ON DELETE CASCADE,
+      reported_entity_type TEXT NOT NULL CHECK (reported_entity_type IN ('user', 'room', 'chat_message')),
+      reported_entity_id TEXT NOT NULL,
+      report_type TEXT NOT NULL CHECK (report_type IN ('harassment', 'spam', 'inappropriate_content', 'offensive_username', 'fake_profile', 'other')),
+      reason TEXT NOT NULL,
+      evidence_url TEXT,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'investigating', 'resolved', 'dismissed')),
+      admin_notes TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+
+    -- Indexes for user reports
+    CREATE INDEX IF NOT EXISTS idx_user_reports_reporter ON user_reports(reporter_id);
+    CREATE INDEX IF NOT EXISTS idx_user_reports_entity ON user_reports(reported_entity_type, reported_entity_id);
+    CREATE INDEX IF NOT EXISTS idx_user_reports_status ON user_reports(status);
+    CREATE INDEX IF NOT EXISTS idx_user_reports_created ON user_reports(created_at DESC);
   `)
 
   return db
@@ -337,6 +374,28 @@ export interface ParsedNotification extends Omit<Notification, 'data'> {
     comment_id?: string
     [key: string]: any
   } | null
+}
+
+export interface UserBlock {
+  id: string
+  blocker_id: string
+  blocked_id: string
+  reason: string | null
+  created_at: string
+}
+
+export interface UserReport {
+  id: string
+  reporter_id: string
+  reported_entity_type: 'user' | 'room' | 'chat_message'
+  reported_entity_id: string
+  report_type: 'harassment' | 'spam' | 'inappropriate_content' | 'offensive_username' | 'fake_profile' | 'other'
+  reason: string
+  evidence_url: string | null
+  status: 'pending' | 'investigating' | 'resolved' | 'dismissed'
+  admin_notes: string | null
+  created_at: string
+  updated_at: string
 }
 
 // Social features interfaces
@@ -691,31 +750,39 @@ export function declineFriendRequest(friendshipId: string): boolean {
 
 export function searchUsers(query: string, currentUserId: string): User[] {
   const db = getDb()
-  
-  // Search by name or spotify_id, exclude current user and existing friends
+
+  // Search by name or spotify_id, exclude current user, existing friends, and blocked users
   const users = db.prepare(`
-    SELECT * FROM users 
-    WHERE (name LIKE ? OR spotify_id LIKE ?) 
+    SELECT * FROM users
+    WHERE (name LIKE ? OR spotify_id LIKE ?)
     AND spotify_id != ?
     AND spotify_id NOT IN (
-      SELECT CASE 
-        WHEN user1_id = ? THEN user2_id 
-        ELSE user1_id 
-      END 
-      FROM friendships 
-      WHERE (user1_id = ? OR user2_id = ?) 
+      SELECT CASE
+        WHEN user1_id = ? THEN user2_id
+        ELSE user1_id
+      END
+      FROM friendships
+      WHERE (user1_id = ? OR user2_id = ?)
       AND status IN ('pending', 'accepted')
+    )
+    AND spotify_id NOT IN (
+      SELECT blocked_id FROM user_blocks WHERE blocker_id = ?
+    )
+    AND spotify_id NOT IN (
+      SELECT blocker_id FROM user_blocks WHERE blocked_id = ?
     )
     LIMIT 10
   `).all(
-    `%${query}%`, 
-    `%${query}%`, 
+    `%${query}%`,
+    `%${query}%`,
     currentUserId,
-    currentUserId, 
-    currentUserId, 
+    currentUserId,
+    currentUserId,
+    currentUserId,
+    currentUserId,
     currentUserId
   ) as User[]
-  
+
   db.close()
   return users
 }
@@ -1485,7 +1552,18 @@ export function getFriendSuggestions(userId: string, limit = 10): Array<User & {
     WHERE (user1_id = ? OR user2_id = ?)
   `).all(userId, userId, userId) as Array<{ connected_id: string }>
 
-  const excludedIds = new Set([userId, ...existingConnections.map(c => c.connected_id)])
+  // Get blocked users (both directions)
+  const blockedUsers = db.prepare(`
+    SELECT blocked_id as blocked_user FROM user_blocks WHERE blocker_id = ?
+    UNION
+    SELECT blocker_id as blocked_user FROM user_blocks WHERE blocked_id = ?
+  `).all(userId, userId) as Array<{ blocked_user: string }>
+
+  const excludedIds = new Set([
+    userId,
+    ...existingConnections.map(c => c.connected_id),
+    ...blockedUsers.map(b => b.blocked_user)
+  ])
 
   // Get user's top genres for matching
   const userStats = db.prepare('SELECT top_genres FROM user_spotify_stats WHERE user_id = ?')
@@ -1876,4 +1954,268 @@ export function cleanupOldNotifications(): number {
 
   db.close()
   return result.changes
+}
+
+// ============================================================================
+// User Blocking Operations
+// ============================================================================
+
+/**
+ * Block a user
+ * Returns the created block or null if already blocked
+ */
+export function blockUser(blockerId: string, blockedId: string, reason?: string): UserBlock | null {
+  const db = getDb()
+
+  try {
+    const id = `block_${Date.now()}_${Math.random().toString(36).substring(7)}`
+
+    const result = db.prepare(`
+      INSERT INTO user_blocks (id, blocker_id, blocked_id, reason)
+      VALUES (?, ?, ?, ?)
+    `).run(id, blockerId, blockedId, reason || null)
+
+    if (result.changes === 0) {
+      db.close()
+      return null
+    }
+
+    const block = db.prepare('SELECT * FROM user_blocks WHERE id = ?').get(id) as UserBlock
+
+    db.close()
+    return block
+  } catch (error) {
+    db.close()
+    // If unique constraint fails, user is already blocked
+    return null
+  }
+}
+
+/**
+ * Unblock a user
+ * Returns true if successfully unblocked
+ */
+export function unblockUser(blockerId: string, blockedId: string): boolean {
+  const db = getDb()
+
+  const result = db.prepare(`
+    DELETE FROM user_blocks
+    WHERE blocker_id = ? AND blocked_id = ?
+  `).run(blockerId, blockedId)
+
+  db.close()
+  return result.changes > 0
+}
+
+/**
+ * Check if a user has blocked another user
+ */
+export function isUserBlocked(blockerId: string, blockedId: string): boolean {
+  const db = getDb()
+
+  const block = db.prepare(`
+    SELECT id FROM user_blocks
+    WHERE blocker_id = ? AND blocked_id = ?
+  `).get(blockerId, blockedId)
+
+  db.close()
+  return !!block
+}
+
+/**
+ * Check if there's a block in either direction between two users
+ */
+export function isBlockedByEither(userId1: string, userId2: string): boolean {
+  const db = getDb()
+
+  const block = db.prepare(`
+    SELECT id FROM user_blocks
+    WHERE (blocker_id = ? AND blocked_id = ?)
+       OR (blocker_id = ? AND blocked_id = ?)
+  `).get(userId1, userId2, userId2, userId1)
+
+  db.close()
+  return !!block
+}
+
+/**
+ * Get all users blocked by a user
+ */
+export function getBlockedUsers(blockerId: string): Array<UserBlock & { blocked_user: User }> {
+  const db = getDb()
+
+  const blocks = db.prepare(`
+    SELECT
+      b.*,
+      u.spotify_id as blocked_user_id,
+      u.name as blocked_user_name,
+      u.avatar_url as blocked_user_avatar,
+      u.custom_avatar_url as blocked_user_custom_avatar
+    FROM user_blocks b
+    JOIN users u ON b.blocked_id = u.spotify_id
+    WHERE b.blocker_id = ?
+    ORDER BY b.created_at DESC
+  `).all(blockerId) as Array<UserBlock & {
+    blocked_user_id: string
+    blocked_user_name: string
+    blocked_user_avatar: string | null
+    blocked_user_custom_avatar: string | null
+  }>
+
+  db.close()
+
+  return blocks.map(block => ({
+    id: block.id,
+    blocker_id: block.blocker_id,
+    blocked_id: block.blocked_id,
+    reason: block.reason,
+    created_at: block.created_at,
+    blocked_user: {
+      spotify_id: block.blocked_user_id,
+      name: block.blocked_user_name,
+      avatar_url: block.blocked_user_avatar,
+      custom_avatar_url: block.blocked_user_custom_avatar,
+      profile_room_id: null,
+      created_at: ''
+    }
+  }))
+}
+
+/**
+ * Get all users who have blocked a specific user
+ */
+export function getUsersWhoBlockedUser(blockedId: string): string[] {
+  const db = getDb()
+
+  const blocks = db.prepare(`
+    SELECT blocker_id FROM user_blocks WHERE blocked_id = ?
+  `).all(blockedId) as Array<{ blocker_id: string }>
+
+  db.close()
+  return blocks.map(b => b.blocker_id)
+}
+
+// ============================================================================
+// User Reporting Operations
+// ============================================================================
+
+/**
+ * Create a report for a user, room, or chat message
+ */
+export function createReport(params: {
+  reporterId: string
+  entityType: UserReport['reported_entity_type']
+  entityId: string
+  reportType: UserReport['report_type']
+  reason: string
+  evidenceUrl?: string
+}): UserReport {
+  const db = getDb()
+
+  const id = `report_${Date.now()}_${Math.random().toString(36).substring(7)}`
+
+  db.prepare(`
+    INSERT INTO user_reports (
+      id, reporter_id, reported_entity_type, reported_entity_id,
+      report_type, reason, evidence_url, status
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
+  `).run(
+    id,
+    params.reporterId,
+    params.entityType,
+    params.entityId,
+    params.reportType,
+    params.reason,
+    params.evidenceUrl || null
+  )
+
+  const report = db.prepare('SELECT * FROM user_reports WHERE id = ?').get(id) as UserReport
+
+  db.close()
+  return report
+}
+
+/**
+ * Get reports with optional filters
+ */
+export function getReports(options: {
+  status?: UserReport['status']
+  entityType?: UserReport['reported_entity_type']
+  reporterId?: string
+  entityId?: string
+  limit?: number
+  offset?: number
+} = {}): UserReport[] {
+  const db = getDb()
+
+  const { status, entityType, reporterId, entityId, limit = 50, offset = 0 } = options
+
+  let query = 'SELECT * FROM user_reports WHERE 1=1'
+  const params: any[] = []
+
+  if (status) {
+    query += ' AND status = ?'
+    params.push(status)
+  }
+
+  if (entityType) {
+    query += ' AND reported_entity_type = ?'
+    params.push(entityType)
+  }
+
+  if (reporterId) {
+    query += ' AND reporter_id = ?'
+    params.push(reporterId)
+  }
+
+  if (entityId) {
+    query += ' AND reported_entity_id = ?'
+    params.push(entityId)
+  }
+
+  query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?'
+  params.push(limit, offset)
+
+  const reports = db.prepare(query).all(...params) as UserReport[]
+
+  db.close()
+  return reports
+}
+
+/**
+ * Update report status
+ */
+export function updateReportStatus(
+  reportId: string,
+  status: UserReport['status'],
+  adminNotes?: string
+): boolean {
+  const db = getDb()
+
+  const result = db.prepare(`
+    UPDATE user_reports
+    SET status = ?, admin_notes = ?, updated_at = datetime('now')
+    WHERE id = ?
+  `).run(status, adminNotes || null, reportId)
+
+  db.close()
+  return result.changes > 0
+}
+
+/**
+ * Get report count for an entity (to detect multiple reports)
+ */
+export function getReportCountForEntity(entityType: string, entityId: string): number {
+  const db = getDb()
+
+  const result = db.prepare(`
+    SELECT COUNT(*) as count
+    FROM user_reports
+    WHERE reported_entity_type = ? AND reported_entity_id = ?
+    AND status IN ('pending', 'investigating')
+  `).get(entityType, entityId) as { count: number }
+
+  db.close()
+  return result.count
 }

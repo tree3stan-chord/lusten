@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
-import { sendFriendRequest, getUser } from '../../../../lib/sqlite-db';
+import { sendFriendRequest, getUser, isBlockedByEither } from '../../../../lib/sqlite-db';
 import { sendFriendRequestNotification } from '../../../../lib/notification-service';
 import { authOptions } from '../../../../lib/auth';
 import type { Session } from 'next-auth';
@@ -8,23 +8,31 @@ import type { Session } from 'next-auth';
 export async function POST(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions) as Session | null;
-    
+
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
       );
     }
-    
+
     const { toUserId } = await request.json();
-    
+
     if (!toUserId) {
       return NextResponse.json(
         { error: 'Missing toUserId' },
         { status: 400 }
       );
     }
-    
+
+    // Check if either user has blocked the other
+    if (isBlockedByEither(session.user.id, toUserId)) {
+      return NextResponse.json(
+        { error: 'Cannot send friend request to this user' },
+        { status: 403 }
+      );
+    }
+
     const friendship = sendFriendRequest(session.user.id, toUserId);
 
     if (!friendship) {
