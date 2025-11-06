@@ -6,6 +6,7 @@ import { useSession, signIn, signOut } from 'next-auth/react';
 import { io, Socket } from 'socket.io-client';
 import CreateRoomModal from './components/CreateRoomModal';
 import StatusSelector from './components/StatusSelector';
+import NotificationBell from './components/NotificationBell';
 import { useHeartbeat } from '../hooks/useHeartbeat';
 
 interface Room {
@@ -135,7 +136,10 @@ export default function Home() {
                   <span className="bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-100 text-xs px-2 py-1 rounded-full">
                     Spotify Connected
                   </span>
-                  
+
+                  {/* Notification Bell */}
+                  <NotificationBell />
+
                   {/* User Dropdown */}
                   <div className="relative group">
                     <div className="text-sm text-gray-700 dark:text-gray-200 cursor-pointer px-3 py-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
