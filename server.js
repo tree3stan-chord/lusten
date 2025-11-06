@@ -123,10 +123,10 @@ app.prepare().then(() => {
       socket.emit('public-rooms-list', discoverableRooms)
     })
 
-    socket.on('create-room', async ({ roomId, roomName, userId, roomType }) => {
-      console.log(`User ${userId} creating room ${roomId} (${roomType}): ${roomName}`)
-      logToEndpoint('room-create', { roomId, roomName, userId, roomType })
-      
+    socket.on('create-room', async ({ roomId, roomName, userId, roomType, genres }) => {
+      console.log(`User ${userId} creating room ${roomId} (${roomType}): ${roomName}`, { genres })
+      logToEndpoint('room-create', { roomId, roomName, userId, roomType, genres })
+
       if (!rooms.has(roomId)) {
         // Save to database first
         try {
@@ -137,7 +137,8 @@ app.prepare().then(() => {
               roomId,
               roomName,
               roomType,
-              ownerId: userId
+              ownerId: userId,
+              genres
             })
           });
         } catch (error) {
@@ -155,18 +156,20 @@ app.prepare().then(() => {
           position: 0,
           lastUpdate: Date.now(),
           isPersistent: roomType === 'profile',
-          createdAt: Date.now()
+          createdAt: Date.now(),
+          genres: genres || []
         })
-        
+
         socket.emit('room-created', { roomId, roomName })
-        
+
         // Notify all clients about new discoverable rooms (public or profile)
         if (roomType === 'public' || roomType === 'profile') {
           socket.broadcast.emit('public-room-created', {
             id: roomId,
             name: roomName,
             type: roomType,
-            listeners: 1
+            listeners: 1,
+            genres: genres || []
           })
         }
       } else {

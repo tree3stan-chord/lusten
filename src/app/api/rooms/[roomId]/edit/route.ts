@@ -20,7 +20,7 @@ export async function PUT(
 
     const { roomId } = await params;
     const updates = await request.json();
-    
+
     // Check if user is the room owner
     const currentRoom = getRoom(roomId);
     if (!currentRoom) {
@@ -29,14 +29,23 @@ export async function PUT(
         { status: 404 }
       );
     }
-    
+
     if (currentRoom.owner_id !== session.user.id) {
       return NextResponse.json(
         { error: 'Only room owner can edit room' },
         { status: 403 }
       );
     }
-    
+
+    // Handle genres field - convert array to JSON string if provided
+    if (updates.genres !== undefined) {
+      if (Array.isArray(updates.genres)) {
+        updates.genres = JSON.stringify(updates.genres);
+      } else if (updates.genres === null || updates.genres === '') {
+        updates.genres = null;
+      }
+    }
+
     const updatedRoom = updateRoomDetails(roomId, updates);
     
     if (updatedRoom) {
