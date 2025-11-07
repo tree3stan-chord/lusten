@@ -372,6 +372,22 @@ function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_posts_visibility ON posts(visibility);
     CREATE INDEX IF NOT EXISTS idx_posts_created ON posts(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_posts_user_created ON posts(user_id, created_at DESC);
+
+    -- Post reactions table (likes and other reactions)
+    CREATE TABLE IF NOT EXISTS post_reactions (
+      id TEXT PRIMARY KEY,
+      post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(spotify_id) ON DELETE CASCADE,
+      reaction_type TEXT NOT NULL CHECK (reaction_type IN ('like', 'love', 'fire', 'laugh', 'wow', 'sad')),
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(post_id, user_id)
+    );
+
+    -- Indexes for post reactions
+    CREATE INDEX IF NOT EXISTS idx_reactions_post ON post_reactions(post_id);
+    CREATE INDEX IF NOT EXISTS idx_reactions_user ON post_reactions(user_id);
+    CREATE INDEX IF NOT EXISTS idx_reactions_type ON post_reactions(reaction_type);
+    CREATE INDEX IF NOT EXISTS idx_reactions_post_type ON post_reactions(post_id, reaction_type);
   `)
 
   return db
@@ -561,6 +577,27 @@ export interface Post {
 export interface ParsedPost extends Omit<Post, 'media_urls'> {
   media_urls: string[] | null
   user?: User // Optional user data for feed display
+}
+
+export type ReactionType = 'like' | 'love' | 'fire' | 'laugh' | 'wow' | 'sad'
+
+export interface PostReaction {
+  id: string
+  post_id: string
+  user_id: string
+  reaction_type: ReactionType
+  created_at: string
+}
+
+export interface ReactionCount {
+  reaction_type: ReactionType
+  count: number
+}
+
+export interface ReactionSummary {
+  total: number
+  reactions: ReactionCount[]
+  userReaction: ReactionType | null
 }
 
 // Social features interfaces
@@ -2960,5 +2997,179 @@ export function getFriendsPosts(userId: string, limit = 20): ParsedPost[] {
       privacy_settings: null,
       created_at: ''
     }
+  }))
+}
+
+// ============================================================================
+// Post Reactions Operations
+// ============================================================================
+
+/**
+ * Add or update a reaction to a post
+ * If user already reacted, updates to new reaction type
+ */
+export function addReaction(postId: string, userId: string, reactionType: ReactionType): PostReaction {
+  const db = getDb()
+
+  try {
+    // Try to update existing reaction first
+    const existing = db.prepare(`
+      SELECT * FROM post_reactions WHERE post_id = ? AND user_id = ?
+    `).get(postId, userId) as PostReaction | undefined
+
+    if (existing) {
+      // Update existing reaction
+      db.prepare(`
+        UPDATE post_reactions SET reaction_type = ? WHERE id = ?
+      `).run(reactionType, existing.id)
+
+      const updated = db.prepare('SELECT * FROM post_reactions WHERE id = ?')
+        .get(existing.id) as PostReaction
+
+      db.close()
+      return updated
+    } else {
+      // Create new reaction
+      const id = `reaction_${Date.now()}_${Math.random().toString(36).substring(7)}`
+
+      db.prepare(`
+        INSERT INTO post_reactions (id, post_id, user_id, reaction_type)
+        VALUES (?, ?, ?, ?)
+      `).run(id, postId, userId, reactionType)
+
+      const reaction = db.prepare('SELECT * FROM post_reactions WHERE id = ?')
+        .get(id) as PostReaction
+
+      db.close()
+      return reaction
+    }
+  } catch (error) {
+    db.close()
+    throw error
+  }
+}
+
+/**
+ * Remove a reaction from a post
+ */
+export function removeReaction(postId: string, userId: string): boolean {
+  const db = getDb()
+
+  const result = db.prepare(`
+    DELETE FROM post_reactions WHERE post_id = ? AND user_id = ?
+  `).run(postId, userId)
+
+  db.close()
+  return result.changes > 0
+}
+
+/**
+ * Get user's reaction to a post
+ */
+export function getUserReaction(postId: string, userId: string): ReactionType | null {
+  const db = getDb()
+
+  const reaction = db.prepare(`
+    SELECT reaction_type FROM post_reactions WHERE post_id = ? AND user_id = ?
+  `).get(postId, userId) as { reaction_type: ReactionType } | undefined
+
+  db.close()
+  return reaction ? reaction.reaction_type : null
+}
+
+/**
+ * Get reaction counts for a post
+ */
+export function getReactionCounts(postId: string): ReactionCount[] {
+  const db = getDb()
+
+  const counts = db.prepare(`
+    SELECT reaction_type, COUNT(*) as count
+    FROM post_reactions
+    WHERE post_id = ?
+    GROUP BY reaction_type
+    ORDER BY count DESC
+  `).all(postId) as ReactionCount[]
+
+  db.close()
+  return counts
+}
+
+/**
+ * Get reaction summary for a post (includes user's reaction)
+ */
+export function getReactionSummary(postId: string, userId?: string): ReactionSummary {
+  const db = getDb()
+
+  // Get counts
+  const counts = db.prepare(`
+    SELECT reaction_type, COUNT(*) as count
+    FROM post_reactions
+    WHERE post_id = ?
+    GROUP BY reaction_type
+    ORDER BY count DESC
+  `).all(postId) as ReactionCount[]
+
+  const total = counts.reduce((sum, c) => sum + c.count, 0)
+
+  // Get user's reaction if userId provided
+  let userReaction: ReactionType | null = null
+  if (userId) {
+    const reaction = db.prepare(`
+      SELECT reaction_type FROM post_reactions WHERE post_id = ? AND user_id = ?
+    `).get(postId, userId) as { reaction_type: ReactionType } | undefined
+
+    userReaction = reaction ? reaction.reaction_type : null
+  }
+
+  db.close()
+
+  return {
+    total,
+    reactions: counts,
+    userReaction
+  }
+}
+
+/**
+ * Get users who reacted to a post with a specific reaction
+ */
+export function getReactionUsers(postId: string, reactionType?: ReactionType, limit = 50): Array<{ user: User; reaction_type: ReactionType }> {
+  const db = getDb()
+
+  let query = `
+    SELECT r.reaction_type, u.*
+    FROM post_reactions r
+    JOIN users u ON r.user_id = u.spotify_id
+    WHERE r.post_id = ?
+  `
+
+  const params: any[] = [postId]
+
+  if (reactionType) {
+    query += ' AND r.reaction_type = ?'
+    params.push(reactionType)
+  }
+
+  query += ' ORDER BY r.created_at DESC LIMIT ?'
+  params.push(limit)
+
+  const results = db.prepare(query).all(...params) as (User & { reaction_type: ReactionType })[]
+
+  db.close()
+
+  return results.map(row => ({
+    user: {
+      spotify_id: row.spotify_id,
+      name: row.name,
+      avatar_url: row.avatar_url,
+      custom_avatar_url: row.custom_avatar_url,
+      profile_room_id: row.profile_room_id,
+      bio: row.bio,
+      custom_status: row.custom_status,
+      privacy_settings: row.privacy_settings,
+      created_at: row.created_at
+    },
+    reaction_type: row.reaction_type
   }))
 }
