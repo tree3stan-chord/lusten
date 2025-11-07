@@ -72,8 +72,27 @@ function runMigrations() {
         }
       }
 
+      // Migration 3: Add profile enhancement columns
+      if (!columnNames.includes('bio')) {
+        console.log('  ➕ Adding bio column to users table...')
+        db.prepare('ALTER TABLE users ADD COLUMN bio TEXT').run()
+        migrationsRun++
+      }
+
+      if (!columnNames.includes('custom_status')) {
+        console.log('  ➕ Adding custom_status column to users table...')
+        db.prepare('ALTER TABLE users ADD COLUMN custom_status TEXT').run()
+        migrationsRun++
+      }
+
+      if (!columnNames.includes('privacy_settings')) {
+        console.log('  ➕ Adding privacy_settings column to users table...')
+        db.prepare('ALTER TABLE users ADD COLUMN privacy_settings TEXT').run()
+        migrationsRun++
+      }
+
       // Future migrations go here...
-      
+
       if (migrationsRun > 0) {
         console.log(`✅ Applied ${migrationsRun} database migrations successfully`)
       } else {
@@ -111,6 +130,9 @@ function initializeDatabase() {
       custom_avatar_url TEXT,
       avatar_updated_at TEXT,
       profile_room_id TEXT,
+      bio TEXT,
+      custom_status TEXT,
+      privacy_settings TEXT, -- JSON: { profile_visibility: 'public' | 'friends' | 'private', activity_visibility: 'public' | 'friends' | 'private', show_listening: boolean }
       created_at TEXT DEFAULT (datetime('now'))
     );
 
@@ -227,6 +249,196 @@ function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_room_history_room ON room_play_history(room_id);
     CREATE INDEX IF NOT EXISTS idx_room_history_played_at ON room_play_history(played_at);
     CREATE INDEX IF NOT EXISTS idx_room_history_room_time ON room_play_history(room_id, played_at DESC);
+
+    -- Notifications table (for user notifications)
+    CREATE TABLE IF NOT EXISTS notifications (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(spotify_id) ON DELETE CASCADE,
+      type TEXT NOT NULL CHECK (type IN ('friend_request', 'friend_accepted', 'friend_online', 'room_invite', 'mention', 'like', 'comment', 'system')),
+      title TEXT NOT NULL,
+      message TEXT NOT NULL,
+      data TEXT, -- JSON data with context (friend_id, room_id, post_id, etc.)
+      link TEXT, -- URL to navigate to when clicked
+      is_read BOOLEAN DEFAULT FALSE,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    -- Indexes for notifications
+    CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);
+    CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(is_read);
+    CREATE INDEX IF NOT EXISTS idx_notifications_user_read ON notifications(user_id, is_read);
+    CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_notifications_user_created ON notifications(user_id, created_at DESC);
+
+    -- User blocks table (for blocking other users)
+    CREATE TABLE IF NOT EXISTS user_blocks (
+      id TEXT PRIMARY KEY,
+      blocker_id TEXT NOT NULL REFERENCES users(spotify_id) ON DELETE CASCADE,
+      blocked_id TEXT NOT NULL REFERENCES users(spotify_id) ON DELETE CASCADE,
+      reason TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(blocker_id, blocked_id),
+      CHECK(blocker_id != blocked_id)
+    );
+
+    -- Indexes for user blocks
+    CREATE INDEX IF NOT EXISTS idx_user_blocks_blocker ON user_blocks(blocker_id);
+    CREATE INDEX IF NOT EXISTS idx_user_blocks_blocked ON user_blocks(blocked_id);
+    CREATE INDEX IF NOT EXISTS idx_user_blocks_created ON user_blocks(created_at DESC);
+
+    -- User reports table (for reporting users and rooms)
+    CREATE TABLE IF NOT EXISTS user_reports (
+      id TEXT PRIMARY KEY,
+      reporter_id TEXT NOT NULL REFERENCES users(spotify_id) ON DELETE CASCADE,
+      reported_entity_type TEXT NOT NULL CHECK (reported_entity_type IN ('user', 'room', 'chat_message')),
+      reported_entity_id TEXT NOT NULL,
+      report_type TEXT NOT NULL CHECK (report_type IN ('harassment', 'spam', 'inappropriate_content', 'offensive_username', 'fake_profile', 'other')),
+      reason TEXT NOT NULL,
+      evidence_url TEXT,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'investigating', 'resolved', 'dismissed')),
+      admin_notes TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+
+    -- Indexes for user reports
+    CREATE INDEX IF NOT EXISTS idx_user_reports_reporter ON user_reports(reporter_id);
+    CREATE INDEX IF NOT EXISTS idx_user_reports_entity ON user_reports(reported_entity_type, reported_entity_id);
+    CREATE INDEX IF NOT EXISTS idx_user_reports_status ON user_reports(status);
+    CREATE INDEX IF NOT EXISTS idx_user_reports_created ON user_reports(created_at DESC);
+
+    -- User achievements table (badges, milestones, progress tracking)
+    CREATE TABLE IF NOT EXISTS user_achievements (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(spotify_id) ON DELETE CASCADE,
+      achievement_type TEXT NOT NULL CHECK (achievement_type IN (
+        'first_room', 'room_host_10', 'room_host_50', 'room_host_100',
+        'first_friend', 'friends_5', 'friends_25', 'friends_100',
+        'listening_hours_10', 'listening_hours_100', 'listening_hours_1000',
+        'genre_explorer', 'night_owl', 'early_bird', 'social_butterfly',
+        'profile_complete', 'top_picks_set', 'bio_writer'
+      )),
+      title TEXT NOT NULL,
+      description TEXT NOT NULL,
+      icon TEXT, -- Emoji or icon identifier
+      progress INTEGER DEFAULT 0, -- For tracking towards achievement
+      target INTEGER DEFAULT 1, -- Target value to unlock
+      unlocked BOOLEAN DEFAULT FALSE,
+      unlocked_at TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(user_id, achievement_type)
+    );
+
+    -- Indexes for achievements
+    CREATE INDEX IF NOT EXISTS idx_achievements_user ON user_achievements(user_id);
+    CREATE INDEX IF NOT EXISTS idx_achievements_type ON user_achievements(achievement_type);
+    CREATE INDEX IF NOT EXISTS idx_achievements_unlocked ON user_achievements(unlocked);
+    CREATE INDEX IF NOT EXISTS idx_achievements_user_unlocked ON user_achievements(user_id, unlocked);
+
+    -- Activity feed table (recent user activities for profile)
+    CREATE TABLE IF NOT EXISTS activity_feed (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(spotify_id) ON DELETE CASCADE,
+      activity_type TEXT NOT NULL CHECK (activity_type IN (
+        'created_room', 'joined_room', 'became_friends', 'unlocked_achievement',
+        'updated_top_picks', 'updated_bio', 'updated_avatar', 'listening_milestone'
+      )),
+      activity_data TEXT, -- JSON with activity-specific data
+      visibility TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'friends', 'private')),
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    -- Indexes for activity feed
+    CREATE INDEX IF NOT EXISTS idx_activity_user ON activity_feed(user_id);
+    CREATE INDEX IF NOT EXISTS idx_activity_type ON activity_feed(activity_type);
+    CREATE INDEX IF NOT EXISTS idx_activity_visibility ON activity_feed(visibility);
+    CREATE INDEX IF NOT EXISTS idx_activity_created ON activity_feed(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_activity_user_created ON activity_feed(user_id, created_at DESC);
+
+    -- Posts table (user posts and status updates)
+    CREATE TABLE IF NOT EXISTS posts (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(spotify_id) ON DELETE CASCADE,
+      content TEXT NOT NULL,
+      media_urls TEXT, -- JSON array of media URLs
+      visibility TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'friends', 'private')),
+      is_edited BOOLEAN DEFAULT FALSE,
+      edited_at TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    -- Indexes for posts
+    CREATE INDEX IF NOT EXISTS idx_posts_user ON posts(user_id);
+    CREATE INDEX IF NOT EXISTS idx_posts_visibility ON posts(visibility);
+    CREATE INDEX IF NOT EXISTS idx_posts_created ON posts(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_posts_user_created ON posts(user_id, created_at DESC);
+
+    -- Post reactions table (likes and other reactions)
+    CREATE TABLE IF NOT EXISTS post_reactions (
+      id TEXT PRIMARY KEY,
+      post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(spotify_id) ON DELETE CASCADE,
+      reaction_type TEXT NOT NULL CHECK (reaction_type IN ('like', 'love', 'fire', 'laugh', 'wow', 'sad')),
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(post_id, user_id)
+    );
+
+    -- Indexes for post reactions
+    CREATE INDEX IF NOT EXISTS idx_reactions_post ON post_reactions(post_id);
+    CREATE INDEX IF NOT EXISTS idx_reactions_user ON post_reactions(user_id);
+    CREATE INDEX IF NOT EXISTS idx_reactions_type ON post_reactions(reaction_type);
+    CREATE INDEX IF NOT EXISTS idx_reactions_post_type ON post_reactions(post_id, reaction_type);
+
+    -- Post comments table (with threading support)
+    CREATE TABLE IF NOT EXISTS post_comments (
+      id TEXT PRIMARY KEY,
+      post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(spotify_id) ON DELETE CASCADE,
+      parent_comment_id TEXT REFERENCES post_comments(id) ON DELETE CASCADE,
+      content TEXT NOT NULL,
+      mentions TEXT, -- JSON array of mentioned user IDs
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+
+    -- Indexes for post comments
+    CREATE INDEX IF NOT EXISTS idx_comments_post ON post_comments(post_id);
+    CREATE INDEX IF NOT EXISTS idx_comments_user ON post_comments(user_id);
+    CREATE INDEX IF NOT EXISTS idx_comments_parent ON post_comments(parent_comment_id);
+    CREATE INDEX IF NOT EXISTS idx_comments_created ON post_comments(created_at);
+
+    -- Room track reactions (live music reactions in rooms)
+    CREATE TABLE IF NOT EXISTS room_track_reactions (
+      id TEXT PRIMARY KEY,
+      room_id TEXT NOT NULL,
+      user_id TEXT NOT NULL REFERENCES users(spotify_id) ON DELETE CASCADE,
+      track_id TEXT NOT NULL,
+      track_name TEXT NOT NULL,
+      artist_name TEXT NOT NULL,
+      reaction_type TEXT NOT NULL CHECK (reaction_type IN ('love', 'fire', 'vibe', 'skip')),
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(room_id, user_id, track_id)
+    );
+
+    -- Indexes for room track reactions
+    CREATE INDEX IF NOT EXISTS idx_room_reactions_room ON room_track_reactions(room_id);
+    CREATE INDEX IF NOT EXISTS idx_room_reactions_user ON room_track_reactions(user_id);
+    CREATE INDEX IF NOT EXISTS idx_room_reactions_track ON room_track_reactions(track_id);
+    CREATE INDEX IF NOT EXISTS idx_room_reactions_created ON room_track_reactions(created_at);
+
+    -- Room likes (favorite rooms)
+    CREATE TABLE IF NOT EXISTS room_likes (
+      id TEXT PRIMARY KEY,
+      room_id TEXT NOT NULL,
+      user_id TEXT NOT NULL REFERENCES users(spotify_id) ON DELETE CASCADE,
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(room_id, user_id)
+    );
+
+    -- Indexes for room likes
+    CREATE INDEX IF NOT EXISTS idx_room_likes_room ON room_likes(room_id);
+    CREATE INDEX IF NOT EXISTS idx_room_likes_user ON room_likes(user_id);
+    CREATE INDEX IF NOT EXISTS idx_room_likes_created ON room_likes(created_at);
   `)
 
   return db
@@ -238,12 +450,26 @@ function getDb() {
 }
 
 // Database schema types
+export interface PrivacySettings {
+  profile_visibility: 'public' | 'friends' | 'private'
+  activity_visibility: 'public' | 'friends' | 'private'
+  show_listening: boolean
+}
+
 export interface User {
   spotify_id: string
   name: string
   avatar_url: string | null
+  custom_avatar_url: string | null
   profile_room_id: string | null
+  bio: string | null
+  custom_status: string | null
+  privacy_settings: string | null // JSON string
   created_at: string
+}
+
+export interface ParsedUser extends Omit<User, 'privacy_settings'> {
+  privacy_settings: PrivacySettings | null
 }
 
 export interface Room {
@@ -295,6 +521,193 @@ export interface RoomBan {
   reason: string | null
   expires_at: string | null
   created_at: string
+}
+
+export interface Notification {
+  id: string
+  user_id: string
+  type: 'friend_request' | 'friend_accepted' | 'friend_online' | 'room_invite' | 'mention' | 'like' | 'comment' | 'system'
+  title: string
+  message: string
+  data: string | null // JSON string with context
+  link: string | null
+  is_read: boolean
+  created_at: string
+}
+
+export interface ParsedNotification extends Omit<Notification, 'data'> {
+  data: {
+    friend_id?: string
+    room_id?: string
+    post_id?: string
+    comment_id?: string
+    [key: string]: any
+  } | null
+}
+
+export interface UserBlock {
+  id: string
+  blocker_id: string
+  blocked_id: string
+  reason: string | null
+  created_at: string
+}
+
+export interface UserReport {
+  id: string
+  reporter_id: string
+  reported_entity_type: 'user' | 'room' | 'chat_message'
+  reported_entity_id: string
+  report_type: 'harassment' | 'spam' | 'inappropriate_content' | 'offensive_username' | 'fake_profile' | 'other'
+  reason: string
+  evidence_url: string | null
+  status: 'pending' | 'investigating' | 'resolved' | 'dismissed'
+  admin_notes: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type AchievementType =
+  | 'first_room' | 'room_host_10' | 'room_host_50' | 'room_host_100'
+  | 'first_friend' | 'friends_5' | 'friends_25' | 'friends_100'
+  | 'listening_hours_10' | 'listening_hours_100' | 'listening_hours_1000'
+  | 'genre_explorer' | 'night_owl' | 'early_bird' | 'social_butterfly'
+  | 'profile_complete' | 'top_picks_set' | 'bio_writer'
+
+export interface UserAchievement {
+  id: string
+  user_id: string
+  achievement_type: AchievementType
+  title: string
+  description: string
+  icon: string | null
+  progress: number
+  target: number
+  unlocked: boolean
+  unlocked_at: string | null
+  created_at: string
+}
+
+export type ActivityType =
+  | 'created_room' | 'joined_room' | 'became_friends' | 'unlocked_achievement'
+  | 'updated_top_picks' | 'updated_bio' | 'updated_avatar' | 'listening_milestone'
+
+export interface ActivityFeed {
+  id: string
+  user_id: string
+  activity_type: ActivityType
+  activity_data: string | null // JSON string
+  visibility: 'public' | 'friends' | 'private'
+  created_at: string
+}
+
+export interface ParsedActivity extends Omit<ActivityFeed, 'activity_data'> {
+  activity_data: {
+    room_id?: string
+    room_name?: string
+    friend_id?: string
+    friend_name?: string
+    achievement_type?: string
+    achievement_title?: string
+    milestone_value?: number
+    [key: string]: any
+  } | null
+}
+
+export interface Post {
+  id: string
+  user_id: string
+  content: string
+  media_urls: string | null // JSON array string
+  visibility: 'public' | 'friends' | 'private'
+  is_edited: boolean
+  edited_at: string | null
+  created_at: string
+}
+
+export interface ParsedPost extends Omit<Post, 'media_urls'> {
+  media_urls: string[] | null
+  user?: User // Optional user data for feed display
+}
+
+export type ReactionType = 'like' | 'love' | 'fire' | 'laugh' | 'wow' | 'sad'
+
+export interface PostReaction {
+  id: string
+  post_id: string
+  user_id: string
+  reaction_type: ReactionType
+  created_at: string
+}
+
+export interface ReactionCount {
+  reaction_type: ReactionType
+  count: number
+}
+
+export interface ReactionSummary {
+  total: number
+  reactions: ReactionCount[]
+  userReaction: ReactionType | null
+}
+
+// Comments interfaces
+export interface PostComment {
+  id: string
+  post_id: string
+  user_id: string
+  parent_comment_id: string | null
+  content: string
+  mentions: string | null // JSON array of user IDs
+  created_at: string
+  updated_at: string
+}
+
+export interface ParsedComment extends Omit<PostComment, 'mentions'> {
+  mentions: string[] | null
+  user: User
+  reply_count: number
+}
+
+export interface CommentWithReplies extends ParsedComment {
+  replies: ParsedComment[]
+}
+
+// Room features interfaces
+export type RoomReactionType = 'love' | 'fire' | 'vibe' | 'skip'
+
+export interface RoomTrackReaction {
+  id: string
+  room_id: string
+  user_id: string
+  track_id: string
+  track_name: string
+  artist_name: string
+  reaction_type: RoomReactionType
+  created_at: string
+}
+
+export interface RoomReactionCount {
+  reaction_type: RoomReactionType
+  count: number
+}
+
+export interface RoomReactionSummary {
+  total: number
+  reactions: RoomReactionCount[]
+  userReaction: RoomReactionType | null
+}
+
+export interface RoomLike {
+  id: string
+  room_id: string
+  user_id: string
+  created_at: string
+}
+
+export interface RoomLikeSummary {
+  likeCount: number
+  isLiked: boolean
 }
 
 // Social features interfaces
@@ -649,31 +1062,39 @@ export function declineFriendRequest(friendshipId: string): boolean {
 
 export function searchUsers(query: string, currentUserId: string): User[] {
   const db = getDb()
-  
-  // Search by name or spotify_id, exclude current user and existing friends
+
+  // Search by name or spotify_id, exclude current user, existing friends, and blocked users
   const users = db.prepare(`
-    SELECT * FROM users 
-    WHERE (name LIKE ? OR spotify_id LIKE ?) 
+    SELECT * FROM users
+    WHERE (name LIKE ? OR spotify_id LIKE ?)
     AND spotify_id != ?
     AND spotify_id NOT IN (
-      SELECT CASE 
-        WHEN user1_id = ? THEN user2_id 
-        ELSE user1_id 
-      END 
-      FROM friendships 
-      WHERE (user1_id = ? OR user2_id = ?) 
+      SELECT CASE
+        WHEN user1_id = ? THEN user2_id
+        ELSE user1_id
+      END
+      FROM friendships
+      WHERE (user1_id = ? OR user2_id = ?)
       AND status IN ('pending', 'accepted')
+    )
+    AND spotify_id NOT IN (
+      SELECT blocked_id FROM user_blocks WHERE blocker_id = ?
+    )
+    AND spotify_id NOT IN (
+      SELECT blocker_id FROM user_blocks WHERE blocked_id = ?
     )
     LIMIT 10
   `).all(
-    `%${query}%`, 
-    `%${query}%`, 
+    `%${query}%`,
+    `%${query}%`,
     currentUserId,
-    currentUserId, 
-    currentUserId, 
+    currentUserId,
+    currentUserId,
+    currentUserId,
+    currentUserId,
     currentUserId
   ) as User[]
-  
+
   db.close()
   return users
 }
@@ -1443,7 +1864,18 @@ export function getFriendSuggestions(userId: string, limit = 10): Array<User & {
     WHERE (user1_id = ? OR user2_id = ?)
   `).all(userId, userId, userId) as Array<{ connected_id: string }>
 
-  const excludedIds = new Set([userId, ...existingConnections.map(c => c.connected_id)])
+  // Get blocked users (both directions)
+  const blockedUsers = db.prepare(`
+    SELECT blocked_id as blocked_user FROM user_blocks WHERE blocker_id = ?
+    UNION
+    SELECT blocker_id as blocked_user FROM user_blocks WHERE blocked_id = ?
+  `).all(userId, userId) as Array<{ blocked_user: string }>
+
+  const excludedIds = new Set([
+    userId,
+    ...existingConnections.map(c => c.connected_id),
+    ...blockedUsers.map(b => b.blocked_user)
+  ])
 
   // Get user's top genres for matching
   const userStats = db.prepare('SELECT top_genres FROM user_spotify_stats WHERE user_id = ?')
@@ -1688,4 +2120,1604 @@ export function autoUpdateRoomGenres(roomId: string): boolean {
 
   db.close()
   return true
+}
+
+// ============================================================================
+// NOTIFICATION FUNCTIONS
+// ============================================================================
+
+/**
+ * Create a notification for a user
+ */
+export function createNotification(params: {
+  userId: string
+  type: Notification['type']
+  title: string
+  message: string
+  data?: Record<string, any>
+  link?: string
+}): Notification {
+  const db = getDb()
+
+  const id = `notif_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+  const dataString = params.data ? JSON.stringify(params.data) : null
+
+  db.prepare(`
+    INSERT INTO notifications (id, user_id, type, title, message, data, link)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    params.userId,
+    params.type,
+    params.title,
+    params.message,
+    dataString,
+    params.link || null
+  )
+
+  const notification = db.prepare('SELECT * FROM notifications WHERE id = ?').get(id) as Notification
+
+  db.close()
+  return notification
+}
+
+/**
+ * Get notifications for a user with pagination
+ */
+export function getUserNotifications(
+  userId: string,
+  options: {
+    limit?: number
+    offset?: number
+    unreadOnly?: boolean
+  } = {}
+): ParsedNotification[] {
+  const db = getDb()
+
+  const { limit = 20, offset = 0, unreadOnly = false } = options
+
+  let query = 'SELECT * FROM notifications WHERE user_id = ?'
+  const params: any[] = [userId]
+
+  if (unreadOnly) {
+    query += ' AND is_read = FALSE'
+  }
+
+  query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?'
+  params.push(limit, offset)
+
+  const notifications = db.prepare(query).all(...params) as Notification[]
+
+  db.close()
+
+  return notifications.map(notif => ({
+    ...notif,
+    data: notif.data ? JSON.parse(notif.data) : null
+  }))
+}
+
+/**
+ * Get unread notification count for a user
+ */
+export function getUnreadCount(userId: string): number {
+  const db = getDb()
+
+  const result = db.prepare('SELECT COUNT(*) as count FROM notifications WHERE user_id = ? AND is_read = FALSE')
+    .get(userId) as { count: number }
+
+  db.close()
+  return result.count
+}
+
+/**
+ * Mark a notification as read
+ */
+export function markNotificationRead(notificationId: string, userId: string): boolean {
+  const db = getDb()
+
+  const result = db.prepare('UPDATE notifications SET is_read = TRUE WHERE id = ? AND user_id = ?')
+    .run(notificationId, userId)
+
+  db.close()
+  return result.changes > 0
+}
+
+/**
+ * Mark all notifications as read for a user
+ */
+export function markAllNotificationsRead(userId: string): number {
+  const db = getDb()
+
+  const result = db.prepare('UPDATE notifications SET is_read = TRUE WHERE user_id = ? AND is_read = FALSE')
+    .run(userId)
+
+  db.close()
+  return result.changes
+}
+
+/**
+ * Delete a notification
+ */
+export function deleteNotification(notificationId: string, userId: string): boolean {
+  const db = getDb()
+
+  const result = db.prepare('DELETE FROM notifications WHERE id = ? AND user_id = ?')
+    .run(notificationId, userId)
+
+  db.close()
+  return result.changes > 0
+}
+
+/**
+ * Delete old notifications (cleanup)
+ * Deletes read notifications older than 30 days
+ */
+export function cleanupOldNotifications(): number {
+  const db = getDb()
+
+  const thirtyDaysAgo = new Date()
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
+
+  const result = db.prepare(`
+    DELETE FROM notifications
+    WHERE is_read = TRUE
+    AND created_at < ?
+  `).run(thirtyDaysAgo.toISOString())
+
+  db.close()
+  return result.changes
+}
+
+// ============================================================================
+// User Blocking Operations
+// ============================================================================
+
+/**
+ * Block a user
+ * Returns the created block or null if already blocked
+ */
+export function blockUser(blockerId: string, blockedId: string, reason?: string): UserBlock | null {
+  const db = getDb()
+
+  try {
+    const id = `block_${Date.now()}_${Math.random().toString(36).substring(7)}`
+
+    const result = db.prepare(`
+      INSERT INTO user_blocks (id, blocker_id, blocked_id, reason)
+      VALUES (?, ?, ?, ?)
+    `).run(id, blockerId, blockedId, reason || null)
+
+    if (result.changes === 0) {
+      db.close()
+      return null
+    }
+
+    const block = db.prepare('SELECT * FROM user_blocks WHERE id = ?').get(id) as UserBlock
+
+    db.close()
+    return block
+  } catch (error) {
+    db.close()
+    // If unique constraint fails, user is already blocked
+    return null
+  }
+}
+
+/**
+ * Unblock a user
+ * Returns true if successfully unblocked
+ */
+export function unblockUser(blockerId: string, blockedId: string): boolean {
+  const db = getDb()
+
+  const result = db.prepare(`
+    DELETE FROM user_blocks
+    WHERE blocker_id = ? AND blocked_id = ?
+  `).run(blockerId, blockedId)
+
+  db.close()
+  return result.changes > 0
+}
+
+/**
+ * Check if a user has blocked another user
+ */
+export function isUserBlocked(blockerId: string, blockedId: string): boolean {
+  const db = getDb()
+
+  const block = db.prepare(`
+    SELECT id FROM user_blocks
+    WHERE blocker_id = ? AND blocked_id = ?
+  `).get(blockerId, blockedId)
+
+  db.close()
+  return !!block
+}
+
+/**
+ * Check if there's a block in either direction between two users
+ */
+export function isBlockedByEither(userId1: string, userId2: string): boolean {
+  const db = getDb()
+
+  const block = db.prepare(`
+    SELECT id FROM user_blocks
+    WHERE (blocker_id = ? AND blocked_id = ?)
+       OR (blocker_id = ? AND blocked_id = ?)
+  `).get(userId1, userId2, userId2, userId1)
+
+  db.close()
+  return !!block
+}
+
+/**
+ * Get all users blocked by a user
+ */
+export function getBlockedUsers(blockerId: string): Array<UserBlock & { blocked_user: User }> {
+  const db = getDb()
+
+  const blocks = db.prepare(`
+    SELECT
+      b.*,
+      u.spotify_id as blocked_user_id,
+      u.name as blocked_user_name,
+      u.avatar_url as blocked_user_avatar,
+      u.custom_avatar_url as blocked_user_custom_avatar
+    FROM user_blocks b
+    JOIN users u ON b.blocked_id = u.spotify_id
+    WHERE b.blocker_id = ?
+    ORDER BY b.created_at DESC
+  `).all(blockerId) as Array<UserBlock & {
+    blocked_user_id: string
+    blocked_user_name: string
+    blocked_user_avatar: string | null
+    blocked_user_custom_avatar: string | null
+  }>
+
+  db.close()
+
+  return blocks.map(block => ({
+    id: block.id,
+    blocker_id: block.blocker_id,
+    blocked_id: block.blocked_id,
+    reason: block.reason,
+    created_at: block.created_at,
+    blocked_user: {
+      spotify_id: block.blocked_user_id,
+      name: block.blocked_user_name,
+      avatar_url: block.blocked_user_avatar,
+      custom_avatar_url: block.blocked_user_custom_avatar,
+      profile_room_id: null,
+      created_at: ''
+    }
+  }))
+}
+
+/**
+ * Get all users who have blocked a specific user
+ */
+export function getUsersWhoBlockedUser(blockedId: string): string[] {
+  const db = getDb()
+
+  const blocks = db.prepare(`
+    SELECT blocker_id FROM user_blocks WHERE blocked_id = ?
+  `).all(blockedId) as Array<{ blocker_id: string }>
+
+  db.close()
+  return blocks.map(b => b.blocker_id)
+}
+
+// ============================================================================
+// User Reporting Operations
+// ============================================================================
+
+/**
+ * Create a report for a user, room, or chat message
+ */
+export function createReport(params: {
+  reporterId: string
+  entityType: UserReport['reported_entity_type']
+  entityId: string
+  reportType: UserReport['report_type']
+  reason: string
+  evidenceUrl?: string
+}): UserReport {
+  const db = getDb()
+
+  const id = `report_${Date.now()}_${Math.random().toString(36).substring(7)}`
+
+  db.prepare(`
+    INSERT INTO user_reports (
+      id, reporter_id, reported_entity_type, reported_entity_id,
+      report_type, reason, evidence_url, status
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
+  `).run(
+    id,
+    params.reporterId,
+    params.entityType,
+    params.entityId,
+    params.reportType,
+    params.reason,
+    params.evidenceUrl || null
+  )
+
+  const report = db.prepare('SELECT * FROM user_reports WHERE id = ?').get(id) as UserReport
+
+  db.close()
+  return report
+}
+
+/**
+ * Get reports with optional filters
+ */
+export function getReports(options: {
+  status?: UserReport['status']
+  entityType?: UserReport['reported_entity_type']
+  reporterId?: string
+  entityId?: string
+  limit?: number
+  offset?: number
+} = {}): UserReport[] {
+  const db = getDb()
+
+  const { status, entityType, reporterId, entityId, limit = 50, offset = 0 } = options
+
+  let query = 'SELECT * FROM user_reports WHERE 1=1'
+  const params: any[] = []
+
+  if (status) {
+    query += ' AND status = ?'
+    params.push(status)
+  }
+
+  if (entityType) {
+    query += ' AND reported_entity_type = ?'
+    params.push(entityType)
+  }
+
+  if (reporterId) {
+    query += ' AND reporter_id = ?'
+    params.push(reporterId)
+  }
+
+  if (entityId) {
+    query += ' AND reported_entity_id = ?'
+    params.push(entityId)
+  }
+
+  query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?'
+  params.push(limit, offset)
+
+  const reports = db.prepare(query).all(...params) as UserReport[]
+
+  db.close()
+  return reports
+}
+
+/**
+ * Update report status
+ */
+export function updateReportStatus(
+  reportId: string,
+  status: UserReport['status'],
+  adminNotes?: string
+): boolean {
+  const db = getDb()
+
+  const result = db.prepare(`
+    UPDATE user_reports
+    SET status = ?, admin_notes = ?, updated_at = datetime('now')
+    WHERE id = ?
+  `).run(status, adminNotes || null, reportId)
+
+  db.close()
+  return result.changes > 0
+}
+
+/**
+ * Get report count for an entity (to detect multiple reports)
+ */
+export function getReportCountForEntity(entityType: string, entityId: string): number {
+  const db = getDb()
+
+  const result = db.prepare(`
+    SELECT COUNT(*) as count
+    FROM user_reports
+    WHERE reported_entity_type = ? AND reported_entity_id = ?
+    AND status IN ('pending', 'investigating')
+  `).get(entityType, entityId) as { count: number }
+
+  db.close()
+  return result.count
+}
+
+// ============================================================================
+// Profile Enhancement Operations
+// ============================================================================
+
+/**
+ * Update user bio
+ */
+export function updateUserBio(userId: string, bio: string): boolean {
+  const db = getDb()
+
+  const result = db.prepare(`
+    UPDATE users SET bio = ? WHERE spotify_id = ?
+  `).run(bio, userId)
+
+  db.close()
+  return result.changes > 0
+}
+
+/**
+ * Update user custom status
+ */
+export function updateUserStatus(userId: string, customStatus: string): boolean {
+  const db = getDb()
+
+  const result = db.prepare(`
+    UPDATE users SET custom_status = ? WHERE spotify_id = ?
+  `).run(customStatus, userId)
+
+  db.close()
+  return result.changes > 0
+}
+
+/**
+ * Update user privacy settings
+ */
+export function updateUserPrivacySettings(userId: string, privacySettings: PrivacySettings): boolean {
+  const db = getDb()
+
+  const result = db.prepare(`
+    UPDATE users SET privacy_settings = ? WHERE spotify_id = ?
+  `).run(JSON.stringify(privacySettings), userId)
+
+  db.close()
+  return result.changes > 0
+}
+
+/**
+ * Get user with parsed privacy settings
+ */
+export function getParsedUser(userId: string): ParsedUser | null {
+  const user = getUser(userId)
+  if (!user) return null
+
+  return {
+    ...user,
+    privacy_settings: user.privacy_settings ? JSON.parse(user.privacy_settings) : null
+  }
+}
+
+/**
+ * Get default privacy settings
+ */
+export function getDefaultPrivacySettings(): PrivacySettings {
+  return {
+    profile_visibility: 'public',
+    activity_visibility: 'public',
+    show_listening: true
+  }
+}
+
+// ============================================================================
+// Achievements Operations
+// ============================================================================
+
+/**
+ * Initialize achievement for a user
+ */
+export function initializeAchievement(params: {
+  userId: string
+  achievementType: AchievementType
+  title: string
+  description: string
+  icon?: string
+  target?: number
+}): UserAchievement {
+  const db = getDb()
+
+  const id = `achievement_${Date.now()}_${Math.random().toString(36).substring(7)}`
+
+  db.prepare(`
+    INSERT INTO user_achievements (
+      id, user_id, achievement_type, title, description, icon, target
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    params.userId,
+    params.achievementType,
+    params.title,
+    params.description,
+    params.icon || null,
+    params.target || 1
+  )
+
+  const achievement = db.prepare('SELECT * FROM user_achievements WHERE id = ?')
+    .get(id) as UserAchievement
+
+  db.close()
+  return achievement
+}
+
+/**
+ * Update achievement progress
+ */
+export function updateAchievementProgress(
+  userId: string,
+  achievementType: AchievementType,
+  progress: number
+): UserAchievement | null {
+  const db = getDb()
+
+  // Get current achievement
+  const achievement = db.prepare(`
+    SELECT * FROM user_achievements
+    WHERE user_id = ? AND achievement_type = ?
+  `).get(userId, achievementType) as UserAchievement | undefined
+
+  if (!achievement) {
+    db.close()
+    return null
+  }
+
+  // Check if should be unlocked
+  const shouldUnlock = !achievement.unlocked && progress >= achievement.target
+
+  if (shouldUnlock) {
+    db.prepare(`
+      UPDATE user_achievements
+      SET progress = ?, unlocked = TRUE, unlocked_at = datetime('now')
+      WHERE user_id = ? AND achievement_type = ?
+    `).run(progress, userId, achievementType)
+  } else {
+    db.prepare(`
+      UPDATE user_achievements
+      SET progress = ?
+      WHERE user_id = ? AND achievement_type = ?
+    `).run(progress, userId, achievementType)
+  }
+
+  const updated = db.prepare(`
+    SELECT * FROM user_achievements
+    WHERE user_id = ? AND achievement_type = ?
+  `).get(userId, achievementType) as UserAchievement
+
+  db.close()
+  return updated
+}
+
+/**
+ * Unlock achievement
+ */
+export function unlockAchievement(userId: string, achievementType: AchievementType): boolean {
+  const db = getDb()
+
+  const result = db.prepare(`
+    UPDATE user_achievements
+    SET unlocked = TRUE, unlocked_at = datetime('now'), progress = target
+    WHERE user_id = ? AND achievement_type = ? AND unlocked = FALSE
+  `).run(userId, achievementType)
+
+  db.close()
+  return result.changes > 0
+}
+
+/**
+ * Get user achievements
+ */
+export function getUserAchievements(userId: string, unlockedOnly = false): UserAchievement[] {
+  const db = getDb()
+
+  let query = 'SELECT * FROM user_achievements WHERE user_id = ?'
+  if (unlockedOnly) {
+    query += ' AND unlocked = TRUE'
+  }
+  query += ' ORDER BY unlocked DESC, created_at DESC'
+
+  const achievements = db.prepare(query).all(userId) as UserAchievement[]
+
+  db.close()
+  return achievements
+}
+
+/**
+ * Get achievement progress
+ */
+export function getAchievementProgress(
+  userId: string,
+  achievementType: AchievementType
+): UserAchievement | null {
+  const db = getDb()
+
+  const achievement = db.prepare(`
+    SELECT * FROM user_achievements
+    WHERE user_id = ? AND achievement_type = ?
+  `).get(userId, achievementType) as UserAchievement | undefined
+
+  db.close()
+  return achievement || null
+}
+
+// ============================================================================
+// Activity Feed Operations
+// ============================================================================
+
+/**
+ * Create activity feed entry
+ */
+export function createActivity(params: {
+  userId: string
+  activityType: ActivityType
+  activityData?: Record<string, any>
+  visibility?: 'public' | 'friends' | 'private'
+}): ActivityFeed {
+  const db = getDb()
+
+  const id = `activity_${Date.now()}_${Math.random().toString(36).substring(7)}`
+
+  db.prepare(`
+    INSERT INTO activity_feed (id, user_id, activity_type, activity_data, visibility)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(
+    id,
+    params.userId,
+    params.activityType,
+    params.activityData ? JSON.stringify(params.activityData) : null,
+    params.visibility || 'public'
+  )
+
+  const activity = db.prepare('SELECT * FROM activity_feed WHERE id = ?').get(id) as ActivityFeed
+
+  db.close()
+  return activity
+}
+
+/**
+ * Get user activity feed
+ */
+export function getUserActivityFeed(userId: string, limit = 20, offset = 0): ParsedActivity[] {
+  const db = getDb()
+
+  const activities = db.prepare(`
+    SELECT * FROM activity_feed
+    WHERE user_id = ?
+    ORDER BY created_at DESC
+    LIMIT ? OFFSET ?
+  `).all(userId, limit, offset) as ActivityFeed[]
+
+  db.close()
+
+  return activities.map(activity => ({
+    ...activity,
+    activity_data: activity.activity_data ? JSON.parse(activity.activity_data) : null
+  }))
+}
+
+/**
+ * Get activity feed for friends (for timeline/feed view)
+ */
+export function getFriendsActivityFeed(userId: string, limit = 50): ParsedActivity[] {
+  const db = getDb()
+
+  const activities = db.prepare(`
+    SELECT a.*
+    FROM activity_feed a
+    INNER JOIN friendships f ON (
+      (f.user1_id = ? AND a.user_id = f.user2_id) OR
+      (f.user2_id = ? AND a.user_id = f.user1_id)
+    )
+    WHERE f.status = 'accepted'
+    AND (a.visibility = 'public' OR a.visibility = 'friends')
+    ORDER BY a.created_at DESC
+    LIMIT ?
+  `).all(userId, userId, limit) as ActivityFeed[]
+
+  db.close()
+
+  return activities.map(activity => ({
+    ...activity,
+    activity_data: activity.activity_data ? JSON.parse(activity.activity_data) : null
+  }))
+}
+
+/**
+ * Delete old activity feed entries (cleanup)
+ * Deletes activities older than 90 days
+ */
+export function cleanupOldActivities(): number {
+  const db = getDb()
+
+  const ninetyDaysAgo = new Date()
+  ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90)
+
+  const result = db.prepare(`
+    DELETE FROM activity_feed
+    WHERE created_at < ?
+  `).run(ninetyDaysAgo.toISOString())
+
+  db.close()
+  return result.changes
+}
+
+// ============================================================================
+// Posts Operations
+// ============================================================================
+
+/**
+ * Create a post
+ */
+export function createPost(params: {
+  userId: string
+  content: string
+  mediaUrls?: string[]
+  visibility?: 'public' | 'friends' | 'private'
+}): Post {
+  const db = getDb()
+
+  const id = `post_${Date.now()}_${Math.random().toString(36).substring(7)}`
+
+  db.prepare(`
+    INSERT INTO posts (id, user_id, content, media_urls, visibility)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(
+    id,
+    params.userId,
+    params.content,
+    params.mediaUrls ? JSON.stringify(params.mediaUrls) : null,
+    params.visibility || 'public'
+  )
+
+  const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(id) as Post
+
+  db.close()
+  return post
+}
+
+/**
+ * Update a post
+ */
+export function updatePost(
+  postId: string,
+  userId: string,
+  content: string,
+  mediaUrls?: string[]
+): Post | null {
+  const db = getDb()
+
+  // Verify ownership
+  const existing = db.prepare('SELECT * FROM posts WHERE id = ? AND user_id = ?')
+    .get(postId, userId) as Post | undefined
+
+  if (!existing) {
+    db.close()
+    return null
+  }
+
+  db.prepare(`
+    UPDATE posts
+    SET content = ?, media_urls = ?, is_edited = TRUE, edited_at = datetime('now')
+    WHERE id = ? AND user_id = ?
+  `).run(
+    content,
+    mediaUrls ? JSON.stringify(mediaUrls) : null,
+    postId,
+    userId
+  )
+
+  const updated = db.prepare('SELECT * FROM posts WHERE id = ?').get(postId) as Post
+
+  db.close()
+  return updated
+}
+
+/**
+ * Delete a post
+ */
+export function deletePost(postId: string, userId: string): boolean {
+  const db = getDb()
+
+  const result = db.prepare(`
+    DELETE FROM posts WHERE id = ? AND user_id = ?
+  `).run(postId, userId)
+
+  db.close()
+  return result.changes > 0
+}
+
+/**
+ * Get a single post
+ */
+export function getPost(postId: string): ParsedPost | null {
+  const db = getDb()
+
+  const post = db.prepare(`
+    SELECT p.*, u.name as user_name, u.avatar_url, u.custom_avatar_url
+    FROM posts p
+    JOIN users u ON p.user_id = u.spotify_id
+    WHERE p.id = ?
+  `).get(postId) as (Post & { user_name: string; avatar_url: string | null; custom_avatar_url: string | null }) | undefined
+
+  db.close()
+
+  if (!post) return null
+
+  return {
+    id: post.id,
+    user_id: post.user_id,
+    content: post.content,
+    media_urls: post.media_urls ? JSON.parse(post.media_urls) : null,
+    visibility: post.visibility,
+    is_edited: post.is_edited,
+    edited_at: post.edited_at,
+    created_at: post.created_at,
+    user: {
+      spotify_id: post.user_id,
+      name: post.user_name,
+      avatar_url: post.avatar_url,
+      custom_avatar_url: post.custom_avatar_url,
+      profile_room_id: null,
+      bio: null,
+      custom_status: null,
+      privacy_settings: null,
+      created_at: ''
+    }
+  }
+}
+
+/**
+ * Get user posts
+ */
+export function getUserPosts(userId: string, limit = 20, offset = 0): ParsedPost[] {
+  const db = getDb()
+
+  const posts = db.prepare(`
+    SELECT p.*, u.name as user_name, u.avatar_url, u.custom_avatar_url
+    FROM posts p
+    JOIN users u ON p.user_id = u.spotify_id
+    WHERE p.user_id = ?
+    ORDER BY p.created_at DESC
+    LIMIT ? OFFSET ?
+  `).all(userId, limit, offset) as (Post & { user_name: string; avatar_url: string | null; custom_avatar_url: string | null })[]
+
+  db.close()
+
+  return posts.map(post => ({
+    id: post.id,
+    user_id: post.user_id,
+    content: post.content,
+    media_urls: post.media_urls ? JSON.parse(post.media_urls) : null,
+    visibility: post.visibility,
+    is_edited: post.is_edited,
+    edited_at: post.edited_at,
+    created_at: post.created_at,
+    user: {
+      spotify_id: post.user_id,
+      name: post.user_name,
+      avatar_url: post.avatar_url,
+      custom_avatar_url: post.custom_avatar_url,
+      profile_room_id: null,
+      bio: null,
+      custom_status: null,
+      privacy_settings: null,
+      created_at: ''
+    }
+  }))
+}
+
+/**
+ * Get posts feed (public posts + friends' posts)
+ */
+export function getPostsFeed(userId: string, limit = 20, offset = 0): ParsedPost[] {
+  const db = getDb()
+
+  const posts = db.prepare(`
+    SELECT DISTINCT p.*, u.name as user_name, u.avatar_url, u.custom_avatar_url
+    FROM posts p
+    JOIN users u ON p.user_id = u.spotify_id
+    LEFT JOIN friendships f ON (
+      (f.user1_id = ? AND p.user_id = f.user2_id) OR
+      (f.user2_id = ? AND p.user_id = f.user1_id)
+    )
+    WHERE (
+      p.visibility = 'public'
+      OR (p.visibility = 'friends' AND f.status = 'accepted')
+      OR p.user_id = ?
+    )
+    AND p.user_id NOT IN (
+      SELECT blocked_id FROM user_blocks WHERE blocker_id = ?
+    )
+    AND p.user_id NOT IN (
+      SELECT blocker_id FROM user_blocks WHERE blocked_id = ?
+    )
+    ORDER BY p.created_at DESC
+    LIMIT ? OFFSET ?
+  `).all(userId, userId, userId, userId, userId, limit, offset) as (Post & { user_name: string; avatar_url: string | null; custom_avatar_url: string | null })[]
+
+  db.close()
+
+  return posts.map(post => ({
+    id: post.id,
+    user_id: post.user_id,
+    content: post.content,
+    media_urls: post.media_urls ? JSON.parse(post.media_urls) : null,
+    visibility: post.visibility,
+    is_edited: post.is_edited,
+    edited_at: post.edited_at,
+    created_at: post.created_at,
+    user: {
+      spotify_id: post.user_id,
+      name: post.user_name,
+      avatar_url: post.avatar_url,
+      custom_avatar_url: post.custom_avatar_url,
+      profile_room_id: null,
+      bio: null,
+      custom_status: null,
+      privacy_settings: null,
+      created_at: ''
+    }
+  }))
+}
+
+/**
+ * Get friends' posts only
+ */
+export function getFriendsPosts(userId: string, limit = 20): ParsedPost[] {
+  const db = getDb()
+
+  const posts = db.prepare(`
+    SELECT p.*, u.name as user_name, u.avatar_url, u.custom_avatar_url
+    FROM posts p
+    JOIN users u ON p.user_id = u.spotify_id
+    INNER JOIN friendships f ON (
+      (f.user1_id = ? AND p.user_id = f.user2_id) OR
+      (f.user2_id = ? AND p.user_id = f.user1_id)
+    )
+    WHERE f.status = 'accepted'
+    AND (p.visibility = 'public' OR p.visibility = 'friends')
+    AND p.user_id NOT IN (
+      SELECT blocked_id FROM user_blocks WHERE blocker_id = ?
+    )
+    ORDER BY p.created_at DESC
+    LIMIT ?
+  `).all(userId, userId, userId, limit) as (Post & { user_name: string; avatar_url: string | null; custom_avatar_url: string | null })[]
+
+  db.close()
+
+  return posts.map(post => ({
+    id: post.id,
+    user_id: post.user_id,
+    content: post.content,
+    media_urls: post.media_urls ? JSON.parse(post.media_urls) : null,
+    visibility: post.visibility,
+    is_edited: post.is_edited,
+    edited_at: post.edited_at,
+    created_at: post.created_at,
+    user: {
+      spotify_id: post.user_id,
+      name: post.user_name,
+      avatar_url: post.avatar_url,
+      custom_avatar_url: post.custom_avatar_url,
+      profile_room_id: null,
+      bio: null,
+      custom_status: null,
+      privacy_settings: null,
+      created_at: ''
+    }
+  }))
+}
+
+// ============================================================================
+// Post Reactions Operations
+// ============================================================================
+
+/**
+ * Add or update a reaction to a post
+ * If user already reacted, updates to new reaction type
+ */
+export function addReaction(postId: string, userId: string, reactionType: ReactionType): PostReaction {
+  const db = getDb()
+
+  try {
+    // Try to update existing reaction first
+    const existing = db.prepare(`
+      SELECT * FROM post_reactions WHERE post_id = ? AND user_id = ?
+    `).get(postId, userId) as PostReaction | undefined
+
+    if (existing) {
+      // Update existing reaction
+      db.prepare(`
+        UPDATE post_reactions SET reaction_type = ? WHERE id = ?
+      `).run(reactionType, existing.id)
+
+      const updated = db.prepare('SELECT * FROM post_reactions WHERE id = ?')
+        .get(existing.id) as PostReaction
+
+      db.close()
+      return updated
+    } else {
+      // Create new reaction
+      const id = `reaction_${Date.now()}_${Math.random().toString(36).substring(7)}`
+
+      db.prepare(`
+        INSERT INTO post_reactions (id, post_id, user_id, reaction_type)
+        VALUES (?, ?, ?, ?)
+      `).run(id, postId, userId, reactionType)
+
+      const reaction = db.prepare('SELECT * FROM post_reactions WHERE id = ?')
+        .get(id) as PostReaction
+
+      db.close()
+      return reaction
+    }
+  } catch (error) {
+    db.close()
+    throw error
+  }
+}
+
+/**
+ * Remove a reaction from a post
+ */
+export function removeReaction(postId: string, userId: string): boolean {
+  const db = getDb()
+
+  const result = db.prepare(`
+    DELETE FROM post_reactions WHERE post_id = ? AND user_id = ?
+  `).run(postId, userId)
+
+  db.close()
+  return result.changes > 0
+}
+
+/**
+ * Get user's reaction to a post
+ */
+export function getUserReaction(postId: string, userId: string): ReactionType | null {
+  const db = getDb()
+
+  const reaction = db.prepare(`
+    SELECT reaction_type FROM post_reactions WHERE post_id = ? AND user_id = ?
+  `).get(postId, userId) as { reaction_type: ReactionType } | undefined
+
+  db.close()
+  return reaction ? reaction.reaction_type : null
+}
+
+/**
+ * Get reaction counts for a post
+ */
+export function getReactionCounts(postId: string): ReactionCount[] {
+  const db = getDb()
+
+  const counts = db.prepare(`
+    SELECT reaction_type, COUNT(*) as count
+    FROM post_reactions
+    WHERE post_id = ?
+    GROUP BY reaction_type
+    ORDER BY count DESC
+  `).all(postId) as ReactionCount[]
+
+  db.close()
+  return counts
+}
+
+/**
+ * Get reaction summary for a post (includes user's reaction)
+ */
+export function getReactionSummary(postId: string, userId?: string): ReactionSummary {
+  const db = getDb()
+
+  // Get counts
+  const counts = db.prepare(`
+    SELECT reaction_type, COUNT(*) as count
+    FROM post_reactions
+    WHERE post_id = ?
+    GROUP BY reaction_type
+    ORDER BY count DESC
+  `).all(postId) as ReactionCount[]
+
+  const total = counts.reduce((sum, c) => sum + c.count, 0)
+
+  // Get user's reaction if userId provided
+  let userReaction: ReactionType | null = null
+  if (userId) {
+    const reaction = db.prepare(`
+      SELECT reaction_type FROM post_reactions WHERE post_id = ? AND user_id = ?
+    `).get(postId, userId) as { reaction_type: ReactionType } | undefined
+
+    userReaction = reaction ? reaction.reaction_type : null
+  }
+
+  db.close()
+
+  return {
+    total,
+    reactions: counts,
+    userReaction
+  }
+}
+
+/**
+ * Get users who reacted to a post with a specific reaction
+ */
+export function getReactionUsers(postId: string, reactionType?: ReactionType, limit = 50): Array<{ user: User; reaction_type: ReactionType }> {
+  const db = getDb()
+
+  let query = `
+    SELECT r.reaction_type, u.*
+    FROM post_reactions r
+    JOIN users u ON r.user_id = u.spotify_id
+    WHERE r.post_id = ?
+  `
+
+  const params: any[] = [postId]
+
+  if (reactionType) {
+    query += ' AND r.reaction_type = ?'
+    params.push(reactionType)
+  }
+
+  query += ' ORDER BY r.created_at DESC LIMIT ?'
+  params.push(limit)
+
+  const results = db.prepare(query).all(...params) as (User & { reaction_type: ReactionType })[]
+
+  db.close()
+
+  return results.map(row => ({
+    user: {
+      spotify_id: row.spotify_id,
+      name: row.name,
+      avatar_url: row.avatar_url,
+      custom_avatar_url: row.custom_avatar_url,
+      profile_room_id: row.profile_room_id,
+      bio: row.bio,
+      custom_status: row.custom_status,
+      privacy_settings: row.privacy_settings,
+      created_at: row.created_at
+    },
+    reaction_type: row.reaction_type
+  }))
+}
+
+// ============================================================================
+// POST COMMENTS FUNCTIONS
+// ============================================================================
+
+// Helper function to parse a comment with user data
+function parseComment(comment: PostComment): ParsedComment {
+  const user = getUser(comment.user_id)
+
+  if (!user) {
+    throw new Error('User not found')
+  }
+
+  // Get reply count
+  const db = getDb()
+  const replyCount = db.prepare(`
+    SELECT COUNT(*) as count FROM post_comments WHERE parent_comment_id = ?
+  `).get(comment.id) as { count: number }
+  db.close()
+
+  return {
+    ...comment,
+    mentions: comment.mentions ? JSON.parse(comment.mentions) : null,
+    user,
+    reply_count: replyCount.count
+  }
+}
+
+// Create a new comment
+export function createComment(
+  postId: string,
+  userId: string,
+  content: string,
+  parentCommentId?: string,
+  mentions?: string[]
+): ParsedComment {
+  const db = getDb()
+
+  const id = randomUUID()
+  const mentionsJson = mentions && mentions.length > 0 ? JSON.stringify(mentions) : null
+
+  db.prepare(`
+    INSERT INTO post_comments (id, post_id, user_id, parent_comment_id, content, mentions)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(id, postId, userId, parentCommentId || null, content, mentionsJson)
+
+  const comment = db.prepare('SELECT * FROM post_comments WHERE id = ?')
+    .get(id) as PostComment
+
+  db.close()
+
+  return parseComment(comment)
+}
+
+// Update a comment
+export function updateComment(commentId: string, userId: string, content: string, mentions?: string[]): ParsedComment | null {
+  const db = getDb()
+
+  // Check if comment exists and belongs to user
+  const existing = db.prepare('SELECT * FROM post_comments WHERE id = ? AND user_id = ?')
+    .get(commentId, userId) as PostComment | undefined
+
+  if (!existing) {
+    db.close()
+    return null
+  }
+
+  const mentionsJson = mentions && mentions.length > 0 ? JSON.stringify(mentions) : null
+
+  db.prepare(`
+    UPDATE post_comments
+    SET content = ?, mentions = ?, updated_at = datetime('now')
+    WHERE id = ?
+  `).run(content, mentionsJson, commentId)
+
+  const updated = db.prepare('SELECT * FROM post_comments WHERE id = ?')
+    .get(commentId) as PostComment
+
+  db.close()
+
+  return parseComment(updated)
+}
+
+// Delete a comment
+export function deleteComment(commentId: string, userId: string): boolean {
+  const db = getDb()
+
+  // Check if comment exists and belongs to user
+  const existing = db.prepare('SELECT * FROM post_comments WHERE id = ? AND user_id = ?')
+    .get(commentId, userId) as PostComment | undefined
+
+  if (!existing) {
+    db.close()
+    return false
+  }
+
+  // Delete comment (cascade will handle replies)
+  db.prepare('DELETE FROM post_comments WHERE id = ?').run(commentId)
+
+  db.close()
+  return true
+}
+
+// Get a single comment by ID
+export function getComment(commentId: string): ParsedComment | null {
+  const db = getDb()
+
+  const comment = db.prepare('SELECT * FROM post_comments WHERE id = ?')
+    .get(commentId) as PostComment | undefined
+
+  db.close()
+
+  if (!comment) {
+    return null
+  }
+
+  return parseComment(comment)
+}
+
+// Get top-level comments for a post
+export function getPostComments(postId: string, limit = 50, offset = 0): ParsedComment[] {
+  const db = getDb()
+
+  const comments = db.prepare(`
+    SELECT * FROM post_comments
+    WHERE post_id = ? AND parent_comment_id IS NULL
+    ORDER BY created_at DESC
+    LIMIT ? OFFSET ?
+  `).all(postId, limit, offset) as PostComment[]
+
+  db.close()
+
+  return comments.map(parseComment)
+}
+
+// Get replies to a comment
+export function getCommentReplies(commentId: string, limit = 50): ParsedComment[] {
+  const db = getDb()
+
+  const replies = db.prepare(`
+    SELECT * FROM post_comments
+    WHERE parent_comment_id = ?
+    ORDER BY created_at ASC
+    LIMIT ?
+  `).all(commentId, limit) as PostComment[]
+
+  db.close()
+
+  return replies.map(parseComment)
+}
+
+// Get comment with nested replies
+export function getCommentWithReplies(commentId: string): CommentWithReplies | null {
+  const comment = getComment(commentId)
+
+  if (!comment) {
+    return null
+  }
+
+  const replies = getCommentReplies(commentId)
+
+  return {
+    ...comment,
+    replies
+  }
+}
+
+// Get total comment count for a post
+export function getPostCommentCount(postId: string): number {
+  const db = getDb()
+
+  const result = db.prepare(`
+    SELECT COUNT(*) as count FROM post_comments WHERE post_id = ?
+  `).get(postId) as { count: number }
+
+  db.close()
+
+  return result.count
+}
+
+// ============================================================================
+// ROOM TRACK REACTIONS FUNCTIONS
+// ============================================================================
+
+// Add or update track reaction in room
+export function addRoomTrackReaction(
+  roomId: string,
+  userId: string,
+  trackId: string,
+  trackName: string,
+  artistName: string,
+  reactionType: RoomReactionType
+): RoomTrackReaction {
+  const db = getDb()
+
+  try {
+    // Check if reaction exists
+    const existing = db.prepare(`
+      SELECT * FROM room_track_reactions
+      WHERE room_id = ? AND user_id = ? AND track_id = ?
+    `).get(roomId, userId, trackId) as RoomTrackReaction | undefined
+
+    if (existing) {
+      // Update existing reaction
+      db.prepare(`
+        UPDATE room_track_reactions
+        SET reaction_type = ?
+        WHERE id = ?
+      `).run(reactionType, existing.id)
+
+      const updated = db.prepare('SELECT * FROM room_track_reactions WHERE id = ?')
+        .get(existing.id) as RoomTrackReaction
+
+      db.close()
+      return updated
+    } else {
+      // Create new reaction
+      const id = randomUUID()
+
+      db.prepare(`
+        INSERT INTO room_track_reactions (id, room_id, user_id, track_id, track_name, artist_name, reaction_type)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(id, roomId, userId, trackId, trackName, artistName, reactionType)
+
+      const reaction = db.prepare('SELECT * FROM room_track_reactions WHERE id = ?')
+        .get(id) as RoomTrackReaction
+
+      db.close()
+      return reaction
+    }
+  } catch (error) {
+    db.close()
+    throw error
+  }
+}
+
+// Remove track reaction
+export function removeRoomTrackReaction(roomId: string, userId: string, trackId: string): boolean {
+  const db = getDb()
+
+  const result = db.prepare(`
+    DELETE FROM room_track_reactions
+    WHERE room_id = ? AND user_id = ? AND track_id = ?
+  `).run(roomId, userId, trackId)
+
+  db.close()
+
+  return result.changes > 0
+}
+
+// Get user's reaction for a track in room
+export function getUserRoomTrackReaction(roomId: string, userId: string, trackId: string): RoomReactionType | null {
+  const db = getDb()
+
+  const reaction = db.prepare(`
+    SELECT reaction_type FROM room_track_reactions
+    WHERE room_id = ? AND user_id = ? AND track_id = ?
+  `).get(roomId, userId, trackId) as { reaction_type: RoomReactionType } | undefined
+
+  db.close()
+
+  return reaction ? reaction.reaction_type : null
+}
+
+// Get reaction counts for a track in room
+export function getRoomTrackReactionCounts(roomId: string, trackId: string): RoomReactionCount[] {
+  const db = getDb()
+
+  const counts = db.prepare(`
+    SELECT reaction_type, COUNT(*) as count
+    FROM room_track_reactions
+    WHERE room_id = ? AND track_id = ?
+    GROUP BY reaction_type
+    ORDER BY count DESC
+  `).all(roomId, trackId) as RoomReactionCount[]
+
+  db.close()
+
+  return counts
+}
+
+// Get reaction summary for a track
+export function getRoomTrackReactionSummary(roomId: string, trackId: string, userId?: string): RoomReactionSummary {
+  const db = getDb()
+
+  const counts = getRoomTrackReactionCounts(roomId, trackId)
+
+  const total = counts.reduce((sum, c) => sum + c.count, 0)
+
+  const userReaction = userId ? getUserRoomTrackReaction(roomId, userId, trackId) : null
+
+  db.close()
+
+  return {
+    total,
+    reactions: counts,
+    userReaction
+  }
+}
+
+// Get users who reacted to a track
+export function getRoomTrackReactionUsers(
+  roomId: string,
+  trackId: string,
+  reactionType?: RoomReactionType,
+  limit = 50
+): Array<{ user: User; reaction_type: RoomReactionType }> {
+  const db = getDb()
+
+  let query = `
+    SELECT r.reaction_type, u.*
+    FROM room_track_reactions r
+    JOIN users u ON r.user_id = u.spotify_id
+    WHERE r.room_id = ? AND r.track_id = ?
+  `
+
+  const params: any[] = [roomId, trackId]
+
+  if (reactionType) {
+    query += ' AND r.reaction_type = ?'
+    params.push(reactionType)
+  }
+
+  query += ' ORDER BY r.created_at DESC LIMIT ?'
+  params.push(limit)
+
+  const results = db.prepare(query).all(...params) as (User & { reaction_type: RoomReactionType })[]
+
+  db.close()
+
+  return results.map(row => ({
+    user: {
+      spotify_id: row.spotify_id,
+      name: row.name,
+      avatar_url: row.avatar_url,
+      custom_avatar_url: row.custom_avatar_url,
+      profile_room_id: row.profile_room_id,
+      bio: row.bio,
+      custom_status: row.custom_status,
+      privacy_settings: row.privacy_settings,
+      created_at: row.created_at
+    },
+    reaction_type: row.reaction_type
+  }))
+}
+
+// ============================================================================
+// ROOM LIKES FUNCTIONS
+// ============================================================================
+
+// Like a room
+export function likeRoom(roomId: string, userId: string): RoomLike {
+  const db = getDb()
+
+  const id = randomUUID()
+
+  try {
+    db.prepare(`
+      INSERT INTO room_likes (id, room_id, user_id)
+      VALUES (?, ?, ?)
+    `).run(id, roomId, userId)
+
+    const like = db.prepare('SELECT * FROM room_likes WHERE id = ?')
+      .get(id) as RoomLike
+
+    db.close()
+    return like
+  } catch (error) {
+    db.close()
+    throw error
+  }
+}
+
+// Unlike a room
+export function unlikeRoom(roomId: string, userId: string): boolean {
+  const db = getDb()
+
+  const result = db.prepare(`
+    DELETE FROM room_likes WHERE room_id = ? AND user_id = ?
+  `).run(roomId, userId)
+
+  db.close()
+
+  return result.changes > 0
+}
+
+// Check if user likes a room
+export function isRoomLiked(roomId: string, userId: string): boolean {
+  const db = getDb()
+
+  const like = db.prepare(`
+    SELECT id FROM room_likes WHERE room_id = ? AND user_id = ?
+  `).get(roomId, userId)
+
+  db.close()
+
+  return !!like
+}
+
+// Get room like count
+export function getRoomLikeCount(roomId: string): number {
+  const db = getDb()
+
+  const result = db.prepare(`
+    SELECT COUNT(*) as count FROM room_likes WHERE room_id = ?
+  `).get(roomId) as { count: number }
+
+  db.close()
+
+  return result.count
+}
+
+// Get room like summary
+export function getRoomLikeSummary(roomId: string, userId?: string): RoomLikeSummary {
+  const likeCount = getRoomLikeCount(roomId)
+  const isLiked = userId ? isRoomLiked(roomId, userId) : false
+
+  return {
+    likeCount,
+    isLiked
+  }
+}
+
+// Get user's liked rooms
+export function getUserLikedRooms(userId: string, limit = 50): string[] {
+  const db = getDb()
+
+  const likes = db.prepare(`
+    SELECT room_id FROM room_likes
+    WHERE user_id = ?
+    ORDER BY created_at DESC
+    LIMIT ?
+  `).all(userId, limit) as Array<{ room_id: string }>
+
+  db.close()
+
+  return likes.map(like => like.room_id)
 }
