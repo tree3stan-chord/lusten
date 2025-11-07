@@ -406,6 +406,39 @@ function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_comments_user ON post_comments(user_id);
     CREATE INDEX IF NOT EXISTS idx_comments_parent ON post_comments(parent_comment_id);
     CREATE INDEX IF NOT EXISTS idx_comments_created ON post_comments(created_at);
+
+    -- Room track reactions (live music reactions in rooms)
+    CREATE TABLE IF NOT EXISTS room_track_reactions (
+      id TEXT PRIMARY KEY,
+      room_id TEXT NOT NULL,
+      user_id TEXT NOT NULL REFERENCES users(spotify_id) ON DELETE CASCADE,
+      track_id TEXT NOT NULL,
+      track_name TEXT NOT NULL,
+      artist_name TEXT NOT NULL,
+      reaction_type TEXT NOT NULL CHECK (reaction_type IN ('love', 'fire', 'vibe', 'skip')),
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(room_id, user_id, track_id)
+    );
+
+    -- Indexes for room track reactions
+    CREATE INDEX IF NOT EXISTS idx_room_reactions_room ON room_track_reactions(room_id);
+    CREATE INDEX IF NOT EXISTS idx_room_reactions_user ON room_track_reactions(user_id);
+    CREATE INDEX IF NOT EXISTS idx_room_reactions_track ON room_track_reactions(track_id);
+    CREATE INDEX IF NOT EXISTS idx_room_reactions_created ON room_track_reactions(created_at);
+
+    -- Room likes (favorite rooms)
+    CREATE TABLE IF NOT EXISTS room_likes (
+      id TEXT PRIMARY KEY,
+      room_id TEXT NOT NULL,
+      user_id TEXT NOT NULL REFERENCES users(spotify_id) ON DELETE CASCADE,
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(room_id, user_id)
+    );
+
+    -- Indexes for room likes
+    CREATE INDEX IF NOT EXISTS idx_room_likes_room ON room_likes(room_id);
+    CREATE INDEX IF NOT EXISTS idx_room_likes_user ON room_likes(user_id);
+    CREATE INDEX IF NOT EXISTS idx_room_likes_created ON room_likes(created_at);
   `)
 
   return db
@@ -638,6 +671,43 @@ export interface ParsedComment extends Omit<PostComment, 'mentions'> {
 
 export interface CommentWithReplies extends ParsedComment {
   replies: ParsedComment[]
+}
+
+// Room features interfaces
+export type RoomReactionType = 'love' | 'fire' | 'vibe' | 'skip'
+
+export interface RoomTrackReaction {
+  id: string
+  room_id: string
+  user_id: string
+  track_id: string
+  track_name: string
+  artist_name: string
+  reaction_type: RoomReactionType
+  created_at: string
+}
+
+export interface RoomReactionCount {
+  reaction_type: RoomReactionType
+  count: number
+}
+
+export interface RoomReactionSummary {
+  total: number
+  reactions: RoomReactionCount[]
+  userReaction: RoomReactionType | null
+}
+
+export interface RoomLike {
+  id: string
+  room_id: string
+  user_id: string
+  created_at: string
+}
+
+export interface RoomLikeSummary {
+  likeCount: number
+  isLiked: boolean
 }
 
 // Social features interfaces
@@ -3391,4 +3461,263 @@ export function getPostCommentCount(postId: string): number {
   db.close()
 
   return result.count
+}
+
+// ============================================================================
+// ROOM TRACK REACTIONS FUNCTIONS
+// ============================================================================
+
+// Add or update track reaction in room
+export function addRoomTrackReaction(
+  roomId: string,
+  userId: string,
+  trackId: string,
+  trackName: string,
+  artistName: string,
+  reactionType: RoomReactionType
+): RoomTrackReaction {
+  const db = getDb()
+
+  try {
+    // Check if reaction exists
+    const existing = db.prepare(`
+      SELECT * FROM room_track_reactions
+      WHERE room_id = ? AND user_id = ? AND track_id = ?
+    `).get(roomId, userId, trackId) as RoomTrackReaction | undefined
+
+    if (existing) {
+      // Update existing reaction
+      db.prepare(`
+        UPDATE room_track_reactions
+        SET reaction_type = ?
+        WHERE id = ?
+      `).run(reactionType, existing.id)
+
+      const updated = db.prepare('SELECT * FROM room_track_reactions WHERE id = ?')
+        .get(existing.id) as RoomTrackReaction
+
+      db.close()
+      return updated
+    } else {
+      // Create new reaction
+      const id = randomUUID()
+
+      db.prepare(`
+        INSERT INTO room_track_reactions (id, room_id, user_id, track_id, track_name, artist_name, reaction_type)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(id, roomId, userId, trackId, trackName, artistName, reactionType)
+
+      const reaction = db.prepare('SELECT * FROM room_track_reactions WHERE id = ?')
+        .get(id) as RoomTrackReaction
+
+      db.close()
+      return reaction
+    }
+  } catch (error) {
+    db.close()
+    throw error
+  }
+}
+
+// Remove track reaction
+export function removeRoomTrackReaction(roomId: string, userId: string, trackId: string): boolean {
+  const db = getDb()
+
+  const result = db.prepare(`
+    DELETE FROM room_track_reactions
+    WHERE room_id = ? AND user_id = ? AND track_id = ?
+  `).run(roomId, userId, trackId)
+
+  db.close()
+
+  return result.changes > 0
+}
+
+// Get user's reaction for a track in room
+export function getUserRoomTrackReaction(roomId: string, userId: string, trackId: string): RoomReactionType | null {
+  const db = getDb()
+
+  const reaction = db.prepare(`
+    SELECT reaction_type FROM room_track_reactions
+    WHERE room_id = ? AND user_id = ? AND track_id = ?
+  `).get(roomId, userId, trackId) as { reaction_type: RoomReactionType } | undefined
+
+  db.close()
+
+  return reaction ? reaction.reaction_type : null
+}
+
+// Get reaction counts for a track in room
+export function getRoomTrackReactionCounts(roomId: string, trackId: string): RoomReactionCount[] {
+  const db = getDb()
+
+  const counts = db.prepare(`
+    SELECT reaction_type, COUNT(*) as count
+    FROM room_track_reactions
+    WHERE room_id = ? AND track_id = ?
+    GROUP BY reaction_type
+    ORDER BY count DESC
+  `).all(roomId, trackId) as RoomReactionCount[]
+
+  db.close()
+
+  return counts
+}
+
+// Get reaction summary for a track
+export function getRoomTrackReactionSummary(roomId: string, trackId: string, userId?: string): RoomReactionSummary {
+  const db = getDb()
+
+  const counts = getRoomTrackReactionCounts(roomId, trackId)
+
+  const total = counts.reduce((sum, c) => sum + c.count, 0)
+
+  const userReaction = userId ? getUserRoomTrackReaction(roomId, userId, trackId) : null
+
+  db.close()
+
+  return {
+    total,
+    reactions: counts,
+    userReaction
+  }
+}
+
+// Get users who reacted to a track
+export function getRoomTrackReactionUsers(
+  roomId: string,
+  trackId: string,
+  reactionType?: RoomReactionType,
+  limit = 50
+): Array<{ user: User; reaction_type: RoomReactionType }> {
+  const db = getDb()
+
+  let query = `
+    SELECT r.reaction_type, u.*
+    FROM room_track_reactions r
+    JOIN users u ON r.user_id = u.spotify_id
+    WHERE r.room_id = ? AND r.track_id = ?
+  `
+
+  const params: any[] = [roomId, trackId]
+
+  if (reactionType) {
+    query += ' AND r.reaction_type = ?'
+    params.push(reactionType)
+  }
+
+  query += ' ORDER BY r.created_at DESC LIMIT ?'
+  params.push(limit)
+
+  const results = db.prepare(query).all(...params) as (User & { reaction_type: RoomReactionType })[]
+
+  db.close()
+
+  return results.map(row => ({
+    user: {
+      spotify_id: row.spotify_id,
+      name: row.name,
+      avatar_url: row.avatar_url,
+      custom_avatar_url: row.custom_avatar_url,
+      profile_room_id: row.profile_room_id,
+      bio: row.bio,
+      custom_status: row.custom_status,
+      privacy_settings: row.privacy_settings,
+      created_at: row.created_at
+    },
+    reaction_type: row.reaction_type
+  }))
+}
+
+// ============================================================================
+// ROOM LIKES FUNCTIONS
+// ============================================================================
+
+// Like a room
+export function likeRoom(roomId: string, userId: string): RoomLike {
+  const db = getDb()
+
+  const id = randomUUID()
+
+  try {
+    db.prepare(`
+      INSERT INTO room_likes (id, room_id, user_id)
+      VALUES (?, ?, ?)
+    `).run(id, roomId, userId)
+
+    const like = db.prepare('SELECT * FROM room_likes WHERE id = ?')
+      .get(id) as RoomLike
+
+    db.close()
+    return like
+  } catch (error) {
+    db.close()
+    throw error
+  }
+}
+
+// Unlike a room
+export function unlikeRoom(roomId: string, userId: string): boolean {
+  const db = getDb()
+
+  const result = db.prepare(`
+    DELETE FROM room_likes WHERE room_id = ? AND user_id = ?
+  `).run(roomId, userId)
+
+  db.close()
+
+  return result.changes > 0
+}
+
+// Check if user likes a room
+export function isRoomLiked(roomId: string, userId: string): boolean {
+  const db = getDb()
+
+  const like = db.prepare(`
+    SELECT id FROM room_likes WHERE room_id = ? AND user_id = ?
+  `).get(roomId, userId)
+
+  db.close()
+
+  return !!like
+}
+
+// Get room like count
+export function getRoomLikeCount(roomId: string): number {
+  const db = getDb()
+
+  const result = db.prepare(`
+    SELECT COUNT(*) as count FROM room_likes WHERE room_id = ?
+  `).get(roomId) as { count: number }
+
+  db.close()
+
+  return result.count
+}
+
+// Get room like summary
+export function getRoomLikeSummary(roomId: string, userId?: string): RoomLikeSummary {
+  const likeCount = getRoomLikeCount(roomId)
+  const isLiked = userId ? isRoomLiked(roomId, userId) : false
+
+  return {
+    likeCount,
+    isLiked
+  }
+}
+
+// Get user's liked rooms
+export function getUserLikedRooms(userId: string, limit = 50): string[] {
+  const db = getDb()
+
+  const likes = db.prepare(`
+    SELECT room_id FROM room_likes
+    WHERE user_id = ?
+    ORDER BY created_at DESC
+    LIMIT ?
+  `).all(userId, limit) as Array<{ room_id: string }>
+
+  db.close()
+
+  return likes.map(like => like.room_id)
 }
