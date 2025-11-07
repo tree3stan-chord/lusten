@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createRoom, createOrUpdateProfileRoom } from '../../../../lib/sqlite-db';
-import rateLimiter from '../../../../lib/api-rate-limiter';
+import { createRoom, createOrUpdateProfileRoom } from '@/lib/sqlite-db';
+import rateLimiter from '@/lib/api-rate-limiter';
 
 export async function POST(request: NextRequest) {
   try {

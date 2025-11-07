@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
-import { authOptions } from '../../../../../../../lib/auth';
+import { authOptions } from '@/lib/auth';
 import type { Session } from 'next-auth';
 import {
   addRoomTrackReaction,
@@ -8,7 +8,7 @@ import {
   getRoomTrackReactionSummary,
   getRoomTrackReactionUsers,
   type RoomReactionType
-} from '../../../../../../../lib/sqlite-db';
+} from '@/lib/sqlite-db';
 
 export async function POST(
   request: NextRequest,

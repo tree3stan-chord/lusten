@@ -96,7 +96,8 @@ const nextConfig = {
   },
 
   // Output configuration
-  output: 'standalone',
+  // Note: 'standalone' mode is incompatible with custom server.js (Socket.IO)
+  // output: 'standalone',
 
   // ESLint configuration
   eslint: {

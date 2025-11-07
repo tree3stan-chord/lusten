@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
-import { authOptions } from '../../auth/[...nextauth]/route';
-import { getUnreadCount } from '../../../../lib/sqlite-db';
+import { authOptions } from '@/lib/auth';
+import { getUnreadCount } from '@/lib/sqlite-db';
 
 /**
  * GET /api/notifications/unread-count

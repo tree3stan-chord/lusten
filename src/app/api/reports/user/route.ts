@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
-import { createReport, getUser } from '../../../../lib/sqlite-db';
-import { authOptions } from '../../../../lib/auth';
+import { createReport, getUserById } from '@/lib/sqlite-db';
+import { authOptions } from '@/lib/auth';
 import type { Session } from 'next-auth';
-import type { UserReport } from '../../../../lib/sqlite-db';
+import type { UserReport } from '@/lib/sqlite-db';
 
 export async function POST(request: NextRequest) {
   try {
@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Check if reported user exists
-    const reportedUser = getUser(userId);
+    const reportedUser = getUserById(userId);
     if (!reportedUser) {
       return NextResponse.json(
         { error: 'User not found' },

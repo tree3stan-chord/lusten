@@ -2553,7 +2553,7 @@ export function updateUserBio(userId: string, bio: string): boolean {
 /**
  * Update user custom status
  */
-export function updateUserStatus(userId: string, customStatus: string): boolean {
+export function updateUserCustomStatus(userId: string, customStatus: string): boolean {
   const db = getDb()
 
   const result = db.prepare(`

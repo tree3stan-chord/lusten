@@ -2,12 +2,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import {
   updateUserBio,
-  updateUserStatus,
+  updateUserCustomStatus,
   updateUserPrivacySettings,
   createActivity,
   type PrivacySettings
-} from '../../../../lib/sqlite-db';
-import { authOptions } from '../../../../lib/auth';
+} from '@/lib/sqlite-db';
+import { authOptions } from '@/lib/auth';
 import type { Session } from 'next-auth';
 
 export async function POST(request: NextRequest) {
@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
 
     // Update custom status
     if (customStatus !== undefined) {
-      const success = updateUserStatus(session.user.id, customStatus);
+      const success = updateUserCustomStatus(session.user.id, customStatus);
       if (success) {
         updates.push('customStatus');
       }

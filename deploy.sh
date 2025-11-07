@@ -92,23 +92,50 @@ echo "DEBUG: Checking for existing PID file"
 if [ -f /tmp/lusten.pid ]; then
     OLD_PID=$(cat /tmp/lusten.pid)
     echo "DEBUG: Found existing PID: $OLD_PID"
-    if kill -0 "$OLD_PID" 2>/dev/null; then
+    if sudo kill -0 "$OLD_PID" 2>/dev/null; then
         echo "  Stopping existing process $OLD_PID"
-        kill "$OLD_PID"
+        sudo kill "$OLD_PID"
         sleep 2
     fi
 else
     echo "DEBUG: No existing PID file"
 fi
 
-# Also kill any process using port 3000
+# Kill any Node.js processes related to lusten (more aggressive approach)
+echo "DEBUG: Searching for lusten-related Node.js processes"
+LUSTEN_PIDS=$(ps aux | grep -E "(node server.js|npm.*start)" | grep -v grep | awk '{print $2}' || echo "")
+if [ -n "$LUSTEN_PIDS" ]; then
+    echo "  Found processes: $LUSTEN_PIDS"
+    for PID in $LUSTEN_PIDS; do
+        echo "  Killing process $PID"
+        sudo kill "$PID" 2>/dev/null || true
+    done
+    sleep 3
+    # Force kill if still running
+    for PID in $LUSTEN_PIDS; do
+        if sudo kill -0 "$PID" 2>/dev/null; then
+            echo "  Force killing stubborn process $PID"
+            sudo kill -9 "$PID" 2>/dev/null || true
+        fi
+    done
+    sleep 1
+else
+    echo "DEBUG: No lusten processes found"
+fi
+
+# Final check: kill any process using port 3000
 echo "DEBUG: Checking for processes on port 3000"
-EXISTING_PID=$(lsof -ti:3000 2>/dev/null || echo "")
+EXISTING_PID=$(sudo lsof -ti:3000 2>/dev/null || echo "")
 echo "DEBUG: Process on port 3000: '$EXISTING_PID'"
 if [ -n "$EXISTING_PID" ]; then
     echo "  Killing process $EXISTING_PID using port 3000"
-    kill "$EXISTING_PID" 2>/dev/null || true
+    sudo kill "$EXISTING_PID" 2>/dev/null || true
     sleep 2
+    # Force kill if still running
+    if sudo kill -0 "$EXISTING_PID" 2>/dev/null; then
+        echo "  Force killing process on port 3000"
+        sudo kill -9 "$EXISTING_PID" 2>/dev/null || true
+    fi
 else
     echo "DEBUG: No process found on port 3000"
 fi
@@ -118,9 +145,9 @@ sudo rm -f /tmp/lusten.log
 sudo touch /tmp/lusten.log
 sudo chown $USER:$USER /tmp/lusten.log
 
-# Start new process 
+# Start new process
 echo "DEBUG: About to start Next.js in production mode..."
-echo "DEBUG: Using standalone server as recommended"
+echo "DEBUG: Using custom server.js with Socket.IO"
 export NODE_ENV=production
 nohup npm start > /tmp/lusten.log 2>&1 &
 START_PID=$!

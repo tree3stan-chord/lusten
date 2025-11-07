@@ -3,8 +3,8 @@ import { getServerSession } from 'next-auth/next';
 import {
   getCommentReplies,
   getCommentWithReplies
-} from '../../../../../lib/sqlite-db';
-import { authOptions } from '../../../../../lib/auth';
+} from '@/lib/sqlite-db';
+import { authOptions } from '@/lib/auth';
 import type { Session } from 'next-auth';
 
 export async function GET(

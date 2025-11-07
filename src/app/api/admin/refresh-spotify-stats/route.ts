@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getActiveUsers } from '../../../../lib/sqlite-db';
+import { getActiveUsers } from '@/lib/sqlite-db';
 
 // This endpoint is designed to be called by cron jobs or background processes
 // to refresh Spotify stats for active users

@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
-import { acceptFriendRequest, getUser } from '../../../../lib/sqlite-db';
-import { sendFriendAcceptedNotification } from '../../../../lib/notification-service';
-import { authOptions } from '../../../../lib/auth';
+import { acceptFriendRequest, getUserById } from '@/lib/sqlite-db';
+import { sendFriendAcceptedNotification } from '@/lib/notification-service';
+import { authOptions } from '@/lib/auth';
 import type { Session } from 'next-auth';
 
 export async function POST(request: NextRequest) {
@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
 
     // Send notification to the original requester
     try {
-      const accepterUser = getUser(session.user.id);
+      const accepterUser = getUserById(session.user.id);
       // Determine who the original requester was (the one who didn't accept)
       const requesterId = friendship.user1_id === session.user.id ? friendship.user2_id : friendship.user1_id;
 

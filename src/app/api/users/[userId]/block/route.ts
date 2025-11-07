@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
-import { blockUser, isUserBlocked, getUser } from '../../../../../lib/sqlite-db';
-import { authOptions } from '../../../../../lib/auth';
+import { blockUser, isUserBlocked, getUserById } from '@/lib/sqlite-db';
+import { authOptions } from '@/lib/auth';
 import type { Session } from 'next-auth';
 
 export async function POST(
@@ -37,7 +37,7 @@ export async function POST(
     }
 
     // Check if user exists
-    const userToBlock = getUser(userId);
+    const userToBlock = getUserById(userId);
     if (!userToBlock) {
       return NextResponse.json(
         { error: 'User not found' },

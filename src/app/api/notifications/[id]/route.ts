@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
-import { authOptions } from '../../auth/[...nextauth]/route';
-import { deleteNotification } from '../../../../lib/sqlite-db';
+import { authOptions } from '@/lib/auth';
+import { deleteNotification } from '@/lib/sqlite-db';
 
 /**
  * DELETE /api/notifications/[id]

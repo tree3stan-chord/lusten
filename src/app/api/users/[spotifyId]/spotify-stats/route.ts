@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
-import { authOptions } from '../../../../../lib/auth';
-import { getUserSpotifyStats, updateUserSpotifyStats } from '../../../../../lib/sqlite-db';
-import { SpotifyStatsGenerator } from '../../../../../lib/spotify-stats-generator';
-import { spotifyApi } from '../../../../../lib/spotify-api-client';
-import type { SpotifyTrack, SpotifyArtist, RecentlyPlayedItem } from '../../../../../lib/spotify-stats-generator';
+import { authOptions } from '@/lib/auth';
+import { getUserSpotifyStats, updateUserSpotifyStats } from '@/lib/sqlite-db';
+import { SpotifyStatsGenerator } from '@/lib/spotify-stats-generator';
+import { spotifyApi } from '@/lib/spotify-api-client';
+import type { SpotifyTrack, SpotifyArtist, RecentlyPlayedItem } from '@/lib/spotify-stats-generator';
 
 interface RouteContext {
   params: {

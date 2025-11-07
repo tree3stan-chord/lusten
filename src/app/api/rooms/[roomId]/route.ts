@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getRoomById } from '../../../../lib/sqlite-db';
+import { getRoomById } from '@/lib/sqlite-db';
 
 interface RouteParams {
   params: Promise<{ roomId: string }>;

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getUserById } from '../../../../lib/sqlite-db';
+import { getUserById } from '@/lib/sqlite-db';
 
 interface RouteParams {
   params: Promise<{ spotifyId: string }>;

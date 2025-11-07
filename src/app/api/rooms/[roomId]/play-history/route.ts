@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { addToPlayHistory, getRecentPlayHistory } from '../../../../../lib/sqlite-db';
+import { addToPlayHistory, getRecentPlayHistory } from '@/lib/sqlite-db';
 
 export async function POST(
   request: NextRequest,

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { analyzeRoomGenres, autoUpdateRoomGenres } from '../../../../../lib/sqlite-db';
+import { analyzeRoomGenres, autoUpdateRoomGenres } from '@/lib/sqlite-db';
 
 export async function POST(
   request: NextRequest,

@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
-import { authOptions } from '../../../../lib/auth';
-import { updateUserAvatar, getUserAvatarInfo } from '../../../../lib/sqlite-db';
-import { validateImageFile, AVATAR_CONFIG } from '../../../../lib/image-utils';
+import { authOptions } from '@/lib/auth';
+import { updateUserAvatar, getUserAvatarInfo } from '@/lib/sqlite-db';
+import { validateImageFile, AVATAR_CONFIG } from '@/lib/image-utils';
 
 export async function POST(request: NextRequest) {
   try {

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
-import { authOptions } from '../../auth/[...nextauth]/route';
-import { markNotificationRead, markAllNotificationsRead } from '../../../../lib/sqlite-db';
+import { authOptions } from '@/lib/auth';
+import { markNotificationRead, markAllNotificationsRead } from '@/lib/sqlite-db';
 
 /**
  * POST /api/notifications/mark-read

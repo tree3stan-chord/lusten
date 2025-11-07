@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getRoomsByGenre, searchRoomsByGenres, getPublicRoomsWithGenres } from '../../../../lib/sqlite-db';
+import { getRoomsByGenre, searchRoomsByGenres, getPublicRoomsWithGenres } from '@/lib/sqlite-db';
 
 export async function GET(request: NextRequest) {
   try {

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
-import { authOptions } from '../../../../lib/auth';
-import { deleteUserAvatar } from '../../../../lib/sqlite-db';
+import { authOptions } from '@/lib/auth';
+import { deleteUserAvatar } from '@/lib/sqlite-db';
 
 export async function DELETE(request: NextRequest) {
   try {

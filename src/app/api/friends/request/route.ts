@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
-import { sendFriendRequest, getUser, isBlockedByEither } from '../../../../lib/sqlite-db';
-import { sendFriendRequestNotification } from '../../../../lib/notification-service';
-import { authOptions } from '../../../../lib/auth';
+import { sendFriendRequest, getUserById, isBlockedByEither } from '@/lib/sqlite-db';
+import { sendFriendRequestNotification } from '@/lib/notification-service';
+import { authOptions } from '@/lib/auth';
 import type { Session } from 'next-auth';
 
 export async function POST(request: NextRequest) {
@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
 
     // Send notification to recipient
     try {
-      const requesterUser = getUser(session.user.id);
+      const requesterUser = getUserById(session.user.id);
       if (requesterUser) {
         await sendFriendRequestNotification(
           toUserId,

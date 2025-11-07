@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
-import { updateUserStatus, cleanupInactiveUsers } from '../../../../lib/sqlite-db';
-import { authOptions } from '../../../../lib/auth';
+import { updateUserStatus, cleanupInactiveUsers } from '@/lib/sqlite-db';
+import { authOptions } from '@/lib/auth';
 import type { Session } from 'next-auth';
 
 export async function POST(request: NextRequest) {

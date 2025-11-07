@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
-import { genreDetector } from '../../../../lib/spotify-genre-detector';
-import { authOptions } from '../../../../lib/auth';
+import { genreDetector } from '@/lib/spotify-genre-detector';
+import { authOptions } from '@/lib/auth';
 import type { Session } from 'next-auth';
 
 export async function GET() {

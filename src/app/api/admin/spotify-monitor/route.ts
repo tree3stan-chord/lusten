@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getRefreshStats, getPendingJobs, initializeRefreshTokensTable } from '../../../../lib/spotify-refresh-tokens';
-import { getActiveUsers, getUserSpotifyStats } from '../../../../lib/sqlite-db';
+import { getRefreshStats, getPendingJobs, initializeRefreshTokensTable } from '@/lib/spotify-refresh-tokens';
+import { getActiveUsers, getUserSpotifyStats } from '@/lib/sqlite-db';
 
 // Initialize the refresh tokens table on first access
 try {

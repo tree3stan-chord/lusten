@@ -4,8 +4,8 @@ import {
   createComment,
   getPostComments,
   getPostCommentCount
-} from '../../../../../lib/sqlite-db';
-import { authOptions } from '../../../../../lib/auth';
+} from '@/lib/sqlite-db';
+import { authOptions } from '@/lib/auth';
 import type { Session } from 'next-auth';
 
 export async function POST(

@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
-import { authOptions } from '../../../../../lib/auth';
+import { authOptions } from '@/lib/auth';
 import type { Session } from 'next-auth';
 import {
   likeRoom,
   unlikeRoom,
   getRoomLikeSummary,
   getUserLikedRooms
-} from '../../../../../lib/sqlite-db';
+} from '@/lib/sqlite-db';
 
 export async function POST(
   request: NextRequest,

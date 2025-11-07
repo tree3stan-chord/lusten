@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
-import { getPost, updatePost, deletePost } from '../../../../lib/sqlite-db';
-import { authOptions } from '../../../../lib/auth';
+import { getPost, updatePost, deletePost } from '@/lib/sqlite-db';
+import { authOptions } from '@/lib/auth';
 import type { Session } from 'next-auth';
 
 export async function GET(

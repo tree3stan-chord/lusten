@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
-import { createReport, getRoom } from '../../../../lib/sqlite-db';
-import { authOptions } from '../../../../lib/auth';
+import { createReport, getRoom } from '@/lib/sqlite-db';
+import { authOptions } from '@/lib/auth';
 import type { Session } from 'next-auth';
-import type { UserReport } from '../../../../lib/sqlite-db';
+import type { UserReport } from '@/lib/sqlite-db';
 
 export async function POST(request: NextRequest) {
   try {
