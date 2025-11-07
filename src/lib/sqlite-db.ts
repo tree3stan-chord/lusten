@@ -388,6 +388,24 @@ function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_reactions_user ON post_reactions(user_id);
     CREATE INDEX IF NOT EXISTS idx_reactions_type ON post_reactions(reaction_type);
     CREATE INDEX IF NOT EXISTS idx_reactions_post_type ON post_reactions(post_id, reaction_type);
+
+    -- Post comments table (with threading support)
+    CREATE TABLE IF NOT EXISTS post_comments (
+      id TEXT PRIMARY KEY,
+      post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(spotify_id) ON DELETE CASCADE,
+      parent_comment_id TEXT REFERENCES post_comments(id) ON DELETE CASCADE,
+      content TEXT NOT NULL,
+      mentions TEXT, -- JSON array of mentioned user IDs
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+
+    -- Indexes for post comments
+    CREATE INDEX IF NOT EXISTS idx_comments_post ON post_comments(post_id);
+    CREATE INDEX IF NOT EXISTS idx_comments_user ON post_comments(user_id);
+    CREATE INDEX IF NOT EXISTS idx_comments_parent ON post_comments(parent_comment_id);
+    CREATE INDEX IF NOT EXISTS idx_comments_created ON post_comments(created_at);
   `)
 
   return db
@@ -598,6 +616,28 @@ export interface ReactionSummary {
   total: number
   reactions: ReactionCount[]
   userReaction: ReactionType | null
+}
+
+// Comments interfaces
+export interface PostComment {
+  id: string
+  post_id: string
+  user_id: string
+  parent_comment_id: string | null
+  content: string
+  mentions: string | null // JSON array of user IDs
+  created_at: string
+  updated_at: string
+}
+
+export interface ParsedComment extends Omit<PostComment, 'mentions'> {
+  mentions: string[] | null
+  user: User
+  reply_count: number
+}
+
+export interface CommentWithReplies extends ParsedComment {
+  replies: ParsedComment[]
 }
 
 // Social features interfaces
@@ -3172,4 +3212,183 @@ export function getReactionUsers(postId: string, reactionType?: ReactionType, li
     },
     reaction_type: row.reaction_type
   }))
+}
+
+// ============================================================================
+// POST COMMENTS FUNCTIONS
+// ============================================================================
+
+// Helper function to parse a comment with user data
+function parseComment(comment: PostComment): ParsedComment {
+  const user = getUser(comment.user_id)
+
+  if (!user) {
+    throw new Error('User not found')
+  }
+
+  // Get reply count
+  const db = getDb()
+  const replyCount = db.prepare(`
+    SELECT COUNT(*) as count FROM post_comments WHERE parent_comment_id = ?
+  `).get(comment.id) as { count: number }
+  db.close()
+
+  return {
+    ...comment,
+    mentions: comment.mentions ? JSON.parse(comment.mentions) : null,
+    user,
+    reply_count: replyCount.count
+  }
+}
+
+// Create a new comment
+export function createComment(
+  postId: string,
+  userId: string,
+  content: string,
+  parentCommentId?: string,
+  mentions?: string[]
+): ParsedComment {
+  const db = getDb()
+
+  const id = randomUUID()
+  const mentionsJson = mentions && mentions.length > 0 ? JSON.stringify(mentions) : null
+
+  db.prepare(`
+    INSERT INTO post_comments (id, post_id, user_id, parent_comment_id, content, mentions)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(id, postId, userId, parentCommentId || null, content, mentionsJson)
+
+  const comment = db.prepare('SELECT * FROM post_comments WHERE id = ?')
+    .get(id) as PostComment
+
+  db.close()
+
+  return parseComment(comment)
+}
+
+// Update a comment
+export function updateComment(commentId: string, userId: string, content: string, mentions?: string[]): ParsedComment | null {
+  const db = getDb()
+
+  // Check if comment exists and belongs to user
+  const existing = db.prepare('SELECT * FROM post_comments WHERE id = ? AND user_id = ?')
+    .get(commentId, userId) as PostComment | undefined
+
+  if (!existing) {
+    db.close()
+    return null
+  }
+
+  const mentionsJson = mentions && mentions.length > 0 ? JSON.stringify(mentions) : null
+
+  db.prepare(`
+    UPDATE post_comments
+    SET content = ?, mentions = ?, updated_at = datetime('now')
+    WHERE id = ?
+  `).run(content, mentionsJson, commentId)
+
+  const updated = db.prepare('SELECT * FROM post_comments WHERE id = ?')
+    .get(commentId) as PostComment
+
+  db.close()
+
+  return parseComment(updated)
+}
+
+// Delete a comment
+export function deleteComment(commentId: string, userId: string): boolean {
+  const db = getDb()
+
+  // Check if comment exists and belongs to user
+  const existing = db.prepare('SELECT * FROM post_comments WHERE id = ? AND user_id = ?')
+    .get(commentId, userId) as PostComment | undefined
+
+  if (!existing) {
+    db.close()
+    return false
+  }
+
+  // Delete comment (cascade will handle replies)
+  db.prepare('DELETE FROM post_comments WHERE id = ?').run(commentId)
+
+  db.close()
+  return true
+}
+
+// Get a single comment by ID
+export function getComment(commentId: string): ParsedComment | null {
+  const db = getDb()
+
+  const comment = db.prepare('SELECT * FROM post_comments WHERE id = ?')
+    .get(commentId) as PostComment | undefined
+
+  db.close()
+
+  if (!comment) {
+    return null
+  }
+
+  return parseComment(comment)
+}
+
+// Get top-level comments for a post
+export function getPostComments(postId: string, limit = 50, offset = 0): ParsedComment[] {
+  const db = getDb()
+
+  const comments = db.prepare(`
+    SELECT * FROM post_comments
+    WHERE post_id = ? AND parent_comment_id IS NULL
+    ORDER BY created_at DESC
+    LIMIT ? OFFSET ?
+  `).all(postId, limit, offset) as PostComment[]
+
+  db.close()
+
+  return comments.map(parseComment)
+}
+
+// Get replies to a comment
+export function getCommentReplies(commentId: string, limit = 50): ParsedComment[] {
+  const db = getDb()
+
+  const replies = db.prepare(`
+    SELECT * FROM post_comments
+    WHERE parent_comment_id = ?
+    ORDER BY created_at ASC
+    LIMIT ?
+  `).all(commentId, limit) as PostComment[]
+
+  db.close()
+
+  return replies.map(parseComment)
+}
+
+// Get comment with nested replies
+export function getCommentWithReplies(commentId: string): CommentWithReplies | null {
+  const comment = getComment(commentId)
+
+  if (!comment) {
+    return null
+  }
+
+  const replies = getCommentReplies(commentId)
+
+  return {
+    ...comment,
+    replies
+  }
+}
+
+// Get total comment count for a post
+export function getPostCommentCount(postId: string): number {
+  const db = getDb()
+
+  const result = db.prepare(`
+    SELECT COUNT(*) as count FROM post_comments WHERE post_id = ?
+  `).get(postId) as { count: number }
+
+  db.close()
+
+  return result.count
 }
