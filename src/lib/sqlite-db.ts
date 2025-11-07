@@ -354,6 +354,24 @@ function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_activity_visibility ON activity_feed(visibility);
     CREATE INDEX IF NOT EXISTS idx_activity_created ON activity_feed(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_activity_user_created ON activity_feed(user_id, created_at DESC);
+
+    -- Posts table (user posts and status updates)
+    CREATE TABLE IF NOT EXISTS posts (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(spotify_id) ON DELETE CASCADE,
+      content TEXT NOT NULL,
+      media_urls TEXT, -- JSON array of media URLs
+      visibility TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'friends', 'private')),
+      is_edited BOOLEAN DEFAULT FALSE,
+      edited_at TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    -- Indexes for posts
+    CREATE INDEX IF NOT EXISTS idx_posts_user ON posts(user_id);
+    CREATE INDEX IF NOT EXISTS idx_posts_visibility ON posts(visibility);
+    CREATE INDEX IF NOT EXISTS idx_posts_created ON posts(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_posts_user_created ON posts(user_id, created_at DESC);
   `)
 
   return db
@@ -527,6 +545,22 @@ export interface ParsedActivity extends Omit<ActivityFeed, 'activity_data'> {
     milestone_value?: number
     [key: string]: any
   } | null
+}
+
+export interface Post {
+  id: string
+  user_id: string
+  content: string
+  media_urls: string | null // JSON array string
+  visibility: 'public' | 'friends' | 'private'
+  is_edited: boolean
+  edited_at: string | null
+  created_at: string
+}
+
+export interface ParsedPost extends Omit<Post, 'media_urls'> {
+  media_urls: string[] | null
+  user?: User // Optional user data for feed display
 }
 
 // Social features interfaces
@@ -2660,4 +2694,271 @@ export function cleanupOldActivities(): number {
 
   db.close()
   return result.changes
+}
+
+// ============================================================================
+// Posts Operations
+// ============================================================================
+
+/**
+ * Create a post
+ */
+export function createPost(params: {
+  userId: string
+  content: string
+  mediaUrls?: string[]
+  visibility?: 'public' | 'friends' | 'private'
+}): Post {
+  const db = getDb()
+
+  const id = `post_${Date.now()}_${Math.random().toString(36).substring(7)}`
+
+  db.prepare(`
+    INSERT INTO posts (id, user_id, content, media_urls, visibility)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(
+    id,
+    params.userId,
+    params.content,
+    params.mediaUrls ? JSON.stringify(params.mediaUrls) : null,
+    params.visibility || 'public'
+  )
+
+  const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(id) as Post
+
+  db.close()
+  return post
+}
+
+/**
+ * Update a post
+ */
+export function updatePost(
+  postId: string,
+  userId: string,
+  content: string,
+  mediaUrls?: string[]
+): Post | null {
+  const db = getDb()
+
+  // Verify ownership
+  const existing = db.prepare('SELECT * FROM posts WHERE id = ? AND user_id = ?')
+    .get(postId, userId) as Post | undefined
+
+  if (!existing) {
+    db.close()
+    return null
+  }
+
+  db.prepare(`
+    UPDATE posts
+    SET content = ?, media_urls = ?, is_edited = TRUE, edited_at = datetime('now')
+    WHERE id = ? AND user_id = ?
+  `).run(
+    content,
+    mediaUrls ? JSON.stringify(mediaUrls) : null,
+    postId,
+    userId
+  )
+
+  const updated = db.prepare('SELECT * FROM posts WHERE id = ?').get(postId) as Post
+
+  db.close()
+  return updated
+}
+
+/**
+ * Delete a post
+ */
+export function deletePost(postId: string, userId: string): boolean {
+  const db = getDb()
+
+  const result = db.prepare(`
+    DELETE FROM posts WHERE id = ? AND user_id = ?
+  `).run(postId, userId)
+
+  db.close()
+  return result.changes > 0
+}
+
+/**
+ * Get a single post
+ */
+export function getPost(postId: string): ParsedPost | null {
+  const db = getDb()
+
+  const post = db.prepare(`
+    SELECT p.*, u.name as user_name, u.avatar_url, u.custom_avatar_url
+    FROM posts p
+    JOIN users u ON p.user_id = u.spotify_id
+    WHERE p.id = ?
+  `).get(postId) as (Post & { user_name: string; avatar_url: string | null; custom_avatar_url: string | null }) | undefined
+
+  db.close()
+
+  if (!post) return null
+
+  return {
+    id: post.id,
+    user_id: post.user_id,
+    content: post.content,
+    media_urls: post.media_urls ? JSON.parse(post.media_urls) : null,
+    visibility: post.visibility,
+    is_edited: post.is_edited,
+    edited_at: post.edited_at,
+    created_at: post.created_at,
+    user: {
+      spotify_id: post.user_id,
+      name: post.user_name,
+      avatar_url: post.avatar_url,
+      custom_avatar_url: post.custom_avatar_url,
+      profile_room_id: null,
+      bio: null,
+      custom_status: null,
+      privacy_settings: null,
+      created_at: ''
+    }
+  }
+}
+
+/**
+ * Get user posts
+ */
+export function getUserPosts(userId: string, limit = 20, offset = 0): ParsedPost[] {
+  const db = getDb()
+
+  const posts = db.prepare(`
+    SELECT p.*, u.name as user_name, u.avatar_url, u.custom_avatar_url
+    FROM posts p
+    JOIN users u ON p.user_id = u.spotify_id
+    WHERE p.user_id = ?
+    ORDER BY p.created_at DESC
+    LIMIT ? OFFSET ?
+  `).all(userId, limit, offset) as (Post & { user_name: string; avatar_url: string | null; custom_avatar_url: string | null })[]
+
+  db.close()
+
+  return posts.map(post => ({
+    id: post.id,
+    user_id: post.user_id,
+    content: post.content,
+    media_urls: post.media_urls ? JSON.parse(post.media_urls) : null,
+    visibility: post.visibility,
+    is_edited: post.is_edited,
+    edited_at: post.edited_at,
+    created_at: post.created_at,
+    user: {
+      spotify_id: post.user_id,
+      name: post.user_name,
+      avatar_url: post.avatar_url,
+      custom_avatar_url: post.custom_avatar_url,
+      profile_room_id: null,
+      bio: null,
+      custom_status: null,
+      privacy_settings: null,
+      created_at: ''
+    }
+  }))
+}
+
+/**
+ * Get posts feed (public posts + friends' posts)
+ */
+export function getPostsFeed(userId: string, limit = 20, offset = 0): ParsedPost[] {
+  const db = getDb()
+
+  const posts = db.prepare(`
+    SELECT DISTINCT p.*, u.name as user_name, u.avatar_url, u.custom_avatar_url
+    FROM posts p
+    JOIN users u ON p.user_id = u.spotify_id
+    LEFT JOIN friendships f ON (
+      (f.user1_id = ? AND p.user_id = f.user2_id) OR
+      (f.user2_id = ? AND p.user_id = f.user1_id)
+    )
+    WHERE (
+      p.visibility = 'public'
+      OR (p.visibility = 'friends' AND f.status = 'accepted')
+      OR p.user_id = ?
+    )
+    AND p.user_id NOT IN (
+      SELECT blocked_id FROM user_blocks WHERE blocker_id = ?
+    )
+    AND p.user_id NOT IN (
+      SELECT blocker_id FROM user_blocks WHERE blocked_id = ?
+    )
+    ORDER BY p.created_at DESC
+    LIMIT ? OFFSET ?
+  `).all(userId, userId, userId, userId, userId, limit, offset) as (Post & { user_name: string; avatar_url: string | null; custom_avatar_url: string | null })[]
+
+  db.close()
+
+  return posts.map(post => ({
+    id: post.id,
+    user_id: post.user_id,
+    content: post.content,
+    media_urls: post.media_urls ? JSON.parse(post.media_urls) : null,
+    visibility: post.visibility,
+    is_edited: post.is_edited,
+    edited_at: post.edited_at,
+    created_at: post.created_at,
+    user: {
+      spotify_id: post.user_id,
+      name: post.user_name,
+      avatar_url: post.avatar_url,
+      custom_avatar_url: post.custom_avatar_url,
+      profile_room_id: null,
+      bio: null,
+      custom_status: null,
+      privacy_settings: null,
+      created_at: ''
+    }
+  }))
+}
+
+/**
+ * Get friends' posts only
+ */
+export function getFriendsPosts(userId: string, limit = 20): ParsedPost[] {
+  const db = getDb()
+
+  const posts = db.prepare(`
+    SELECT p.*, u.name as user_name, u.avatar_url, u.custom_avatar_url
+    FROM posts p
+    JOIN users u ON p.user_id = u.spotify_id
+    INNER JOIN friendships f ON (
+      (f.user1_id = ? AND p.user_id = f.user2_id) OR
+      (f.user2_id = ? AND p.user_id = f.user1_id)
+    )
+    WHERE f.status = 'accepted'
+    AND (p.visibility = 'public' OR p.visibility = 'friends')
+    AND p.user_id NOT IN (
+      SELECT blocked_id FROM user_blocks WHERE blocker_id = ?
+    )
+    ORDER BY p.created_at DESC
+    LIMIT ?
+  `).all(userId, userId, userId, limit) as (Post & { user_name: string; avatar_url: string | null; custom_avatar_url: string | null })[]
+
+  db.close()
+
+  return posts.map(post => ({
+    id: post.id,
+    user_id: post.user_id,
+    content: post.content,
+    media_urls: post.media_urls ? JSON.parse(post.media_urls) : null,
+    visibility: post.visibility,
+    is_edited: post.is_edited,
+    edited_at: post.edited_at,
+    created_at: post.created_at,
+    user: {
+      spotify_id: post.user_id,
+      name: post.user_name,
+      avatar_url: post.avatar_url,
+      custom_avatar_url: post.custom_avatar_url,
+      profile_room_id: null,
+      bio: null,
+      custom_status: null,
+      privacy_settings: null,
+      created_at: ''
+    }
+  }))
 }
