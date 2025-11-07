@@ -1,9 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
 import ReactionButton from './ReactionButton';
 import ReactionsList from './ReactionsList';
+import CommentsList from './CommentsList';
 import type { ParsedPost } from '../../lib/sqlite-db';
 
 interface PostCardProps {
@@ -32,8 +33,27 @@ export default function PostCard({ post, onEdit, onDelete }: PostCardProps) {
   const [showMenu, setShowMenu] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [showReactionsList, setShowReactionsList] = useState(false);
+  const [showComments, setShowComments] = useState(false);
+  const [commentCount, setCommentCount] = useState(0);
 
   const isOwner = session?.user?.id === post.user_id;
+
+  // Fetch comment count
+  useEffect(() => {
+    const fetchCommentCount = async () => {
+      try {
+        const response = await fetch(`/api/posts/${post.id}/comments?limit=0`);
+        if (response.ok) {
+          const data = await response.json();
+          setCommentCount(data.total);
+        }
+      } catch (error) {
+        console.error('Failed to fetch comment count:', error);
+      }
+    };
+
+    fetchCommentCount();
+  }, [post.id]);
 
   const handleDelete = async () => {
     if (!confirm('Are you sure you want to delete this post?')) {
@@ -166,12 +186,17 @@ export default function PostCard({ post, onEdit, onDelete }: PostCardProps) {
             <ReactionButton postId={post.id} />
           </div>
 
-          {/* Comment (placeholder) */}
-          <button className="flex items-center gap-2 text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors">
+          {/* Comment */}
+          <button
+            onClick={() => setShowComments(!showComments)}
+            className="flex items-center gap-2 text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
+          >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
             </svg>
-            <span className="text-sm">Comment</span>
+            <span className="text-sm">
+              Comment {commentCount > 0 && `(${commentCount})`}
+            </span>
           </button>
 
           {/* Share (placeholder) */}
@@ -190,6 +215,16 @@ export default function PostCard({ post, onEdit, onDelete }: PostCardProps) {
           postId={post.id}
           onClose={() => setShowReactionsList(false)}
         />
+      )}
+
+      {/* Comments Section */}
+      {showComments && (
+        <div className="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700">
+          <CommentsList
+            postId={post.id}
+            initialTotal={commentCount}
+          />
+        </div>
       )}
     </div>
   );
